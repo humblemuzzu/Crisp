@@ -12,8 +12,6 @@ struct VolumeSliderView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            BrightnessStepButton(systemName: "speaker.fill") { step(-volumeStep) }
-
             Slider(value: $localVolume, in: 0...100) { editing in
                 isDragging = editing
                 if !editing {
@@ -28,7 +26,12 @@ struct VolumeSliderView: View {
                 VolumeService.shared.setVolume(newValue, for: display)
             }
 
-            BrightnessStepButton(systemName: "speaker.wave.3.fill") { step(volumeStep) }
+            Text("\(Int(localVolume))%")
+                .font(.caption2)
+                .monospacedDigit()
+                .foregroundColor(.secondary)
+                .frame(width: 36, alignment: .trailing)
+                .accessibilityHidden(true)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
@@ -39,12 +42,5 @@ struct VolumeSliderView: View {
                 localVolume = newValue
             }
         }
-    }
-
-    /// Volume change per tap of the speaker buttons, matching the volume keys' step.
-    private var volumeStep: Double { 100.0 / 16.0 }
-
-    private func step(_ delta: Double) {
-        VolumeService.shared.setVolume(display.volume + delta, for: display)
     }
 }

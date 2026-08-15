@@ -64,6 +64,7 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         // Per-display keys use prefix + displayID
         static let brightnessPrefix       = "crisp.brightness_"
         static let contrastPrefix         = "crisp.contrast_"
+        static let reapplyDDCOnReconnect  = "crisp.reapplyDDCOnReconnect"
     }
 
     // MARK: - Published Settings
@@ -114,6 +115,13 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         didSet {
             defaults.set(Array(brightnessKeySelectedDisplayUUIDs), forKey: Keys.brightnessKeySelected)
         }
+    }
+
+    /// Re-apply saved DDC brightness/contrast/volume when a display reconnects
+    /// (default on). Input-source re-application is a separate per-display
+    /// toggle in DDCFeatureService, off by default.
+    @Published var reapplyDDCOnReconnect: Bool = true {
+        didSet { defaults.set(reapplyDDCOnReconnect, forKey: Keys.reapplyDDCOnReconnect) }
     }
 
     // MARK: - Per-Display Settings
@@ -184,5 +192,7 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         brightnessKeyTarget = defaults.string(forKey: Keys.brightnessKeyTarget)
             .flatMap(BrightnessKeyTarget.init(rawValue:)) ?? .underCursor
         brightnessKeySelectedDisplayUUIDs = Set(defaults.stringArray(forKey: Keys.brightnessKeySelected) ?? [])
+        reapplyDDCOnReconnect = defaults.object(forKey: Keys.reapplyDDCOnReconnect) != nil
+            ? defaults.bool(forKey: Keys.reapplyDDCOnReconnect) : true
     }
 }

@@ -1,76 +1,11 @@
 import SwiftUI
 
-/// Sun step icon flanking a brightness slider: brightens while pressed, steps
-/// once on click, and keeps stepping while held (initial delay, then repeat),
-/// like holding a hardware brightness key.
-struct BrightnessStepButton: View {
-    let systemName: String
-    let action: () -> Void
-
-    var body: some View {
-        // A Button, not a raw DragGesture: these live inside the panel's
-        // ScrollView, which steals a DragGesture so its onEnded never fires and
-        // the "pressed" highlight sticks on. ButtonStyle.isPressed is managed by
-        // the framework and always resets on release (and on scroll-steal).
-        Button(action: {}) {
-            Image(systemName: systemName)
-                .font(.system(size: 15))
-        }
-        .buttonStyle(HoldRepeatButtonStyle(action: action))
-        .accessibilityHidden(true)
-    }
-}
-
-/// Lights the glyph only while physically held, and repeats the step action
-/// (initial delay, then steady repeat) for as long as it stays held.
-private struct HoldRepeatButtonStyle: ButtonStyle {
-    let action: () -> Void
-
-    func makeBody(configuration: Configuration) -> some View {
-        HoldRepeatLabel(configuration: configuration, action: action)
-    }
-
-    private struct HoldRepeatLabel: View {
-        let configuration: ButtonStyleConfiguration
-        let action: () -> Void
-        @State private var repeatTask: Task<Void, Never>? = nil
-
-        var body: some View {
-            configuration.label
-                .foregroundColor(configuration.isPressed ? .primary : .secondary)
-                .contentShape(Rectangle())
-                .onChange(of: configuration.isPressed) { _, pressed in
-                    if pressed {
-                        action()
-                        repeatTask = Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 400_000_000)
-                            while !Task.isCancelled {
-                                action()
-                                try? await Task.sleep(nanoseconds: 150_000_000)
-                            }
-                        }
-                    } else {
-                        repeatTask?.cancel()
-                        repeatTask = nil
-                    }
-                }
-        }
-    }
-}
-
 struct BrightnessSliderView: View {
     @ObservedObject var display: DisplayInfo
     var compact: Bool = false  // Compact mode: hides the mode label row (used for top-level inline sliders)
     @State private var localBrightness: Double = 50
     @State private var isDragging: Bool = false
     @State private var ddcStatus: Bool? = nil  // nil=unknown, true=DDC, false=Software
-    // Track-click vs drag: defer the first value change of an editing session. A click
-    // produces a single change (glide it on release); a drag produces a stream (write live).
-    @State private var dragConfirmed: Bool = false
-    @State private var deferredFirstChange: Bool = false
-    // While a click's fade runs, hold the thumb at the target instead of letting the
-    // display->slider sync pull it back down through the fade.
-    @State private var clickGliding: Bool = false
 
     var body: some View {
         VStack(spacing: 2) {
@@ -108,36 +43,16 @@ struct BrightnessSliderView: View {
             }
 
             HStack(spacing: 8) {
-                BrightnessStepButton(systemName: "sun.min.fill") { step(-brightnessStep) }
-
                 // Native macOS slider, exactly as in the system Display panel.
+                // One control, no step buttons: drags and clicks write the value
+                // immediately (the coalescing DDC writer paces the I2C bus).
                 Slider(value: $localBrightness, in: 0...max(100.0, display.maxBrightness)) { editing in
-                    if editing {
-                        isDragging = true
-                        dragConfirmed = false
-                        deferredFirstChange = false
-                    } else {
-                        isDragging = false
-                        if !dragConfirmed {
-                            // It was a click, not a drag: glide to the target instead of jumping,
-                            // on every path. DDC externals fade too, the same way brightness keys
-                            // and presets already fade them: the coalescing writer paces the I2C
-                            // bus (~20/s) and drops steps it can't take, so a 200ms fade costs a
-                            // handful of writes. The thumb is already at the target; hold it
-                            // until the fade lands.
-                            clickGliding = true
-                            BrightnessService.shared.setBrightnessSmooth(localBrightness, for: display, duration: 0.2)
-                            Task { @MainActor in
-                                try? await Task.sleep(nanoseconds: 600_000_000)  // fallback release
-                                clickGliding = false
-                                updateDDCStatus()
-                            }
-                        } else {
-                            Task { @MainActor in
-                                // Flush the final value; the coalescing writer already tracked the drag.
-                                await BrightnessService.shared.setBrightness(localBrightness, for: display)
-                                updateDDCStatus()
-                            }
+                    isDragging = editing
+                    if !editing {
+                        Task { @MainActor in
+                            // Flush the final value; the coalescing writer already tracked the drag.
+                            await BrightnessService.shared.setBrightness(localBrightness, for: display)
+                            updateDDCStatus()
                         }
                     }
                 }
@@ -168,28 +83,20 @@ struct BrightnessSliderView: View {
                 .accessibilityValue("\(Int(localBrightness))%")
                 .onChange(of: localBrightness) { _, newValue in
                     guard isDragging else { return }
-                    if dragConfirmed {
-                        // Apply immediately, the service chooses software or DDC internally,
-                        // and its coalescing writer keeps the I2C bus from flooding.
-                        display.brightness = newValue
-                        Task { @MainActor in
-                            await BrightnessService.shared.setBrightness(newValue, for: display)
-                        }
-                    } else if !deferredFirstChange {
-                        // First change: could be a click or the start of a drag. Defer the
-                        // write so a click can glide from the old value instead of jumping.
-                        deferredFirstChange = true
-                    } else {
-                        // Second change: it's a real drag. Go live from here.
-                        dragConfirmed = true
-                        display.brightness = newValue
-                        Task { @MainActor in
-                            await BrightnessService.shared.setBrightness(newValue, for: display)
-                        }
+                    // Live write during drag or click; the coalescing writer keeps the
+                    // I2C bus from flooding and drops intermediate steps.
+                    display.brightness = newValue
+                    Task { @MainActor in
+                        await BrightnessService.shared.setBrightness(newValue, for: display)
                     }
                 }
 
-                BrightnessStepButton(systemName: "sun.max.fill") { step(brightnessStep) }
+                Text("\(Int(localBrightness))%")
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundColor(.secondary)
+                    .frame(width: 36, alignment: .trailing)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 4)
@@ -199,14 +106,7 @@ struct BrightnessSliderView: View {
             updateDDCStatus()
         }
         .onChange(of: display.brightness) { _, newValue in
-            // While a click-glide runs, hold the thumb at the target the click set and
-            // release once the fade reaches it, so the thumb never snaps back down through
-            // the fade (and the release timing tracks the actual DDC fade, not a guess).
-            if clickGliding {
-                if abs(newValue - localBrightness) < 0.75 { clickGliding = false }
-                return
-            }
-            // External change (preset fade, brightness keys, another app).
+            // External change (brightness keys, another app, reconnect reapply).
             // NSSlider renders value changes discretely (withAnimation does not
             // interpolate control values), so smoothness comes from the 60Hz
             // fade steps; track every one of them with a low threshold.
@@ -246,25 +146,12 @@ struct BrightnessSliderView: View {
     private func updateDDCStatus() {
         ddcStatus = BrightnessService.shared.isDDCAvailable(for: display.displayID)
     }
-
-    /// Brightness change per tap (and per hold-repeat) of the sun buttons.
-    private var brightnessStep: Double { 10.0 }
-
-    private func step(_ delta: Double) {
-        let target = max(0, min(display.maxBrightness, display.brightness + delta))
-        // The smooth fade updates display.brightness per frame; localBrightness
-        // follows through the existing onChange sync.
-        BrightnessService.shared.setBrightnessSmooth(target, for: display)
-    }
 }
 
 struct CombinedBrightnessView: View {
     let displays: [DisplayInfo]
     @State private var combinedBrightness: Double = 50
     @State private var isDragging: Bool = false
-    @State private var dragConfirmed: Bool = false
-    @State private var deferredFirstChange: Bool = false
-    @State private var clickGliding: Bool = false
 
     private var averageBrightness: Double {
         guard !displays.isEmpty else { return 50 }
@@ -286,36 +173,14 @@ struct CombinedBrightnessView: View {
                 .padding(.horizontal, 14)
 
             HStack(spacing: 8) {
-                BrightnessStepButton(systemName: "sun.min.fill") { stepAll(-10.0) }
-
                 Slider(value: $combinedBrightness, in: 0...100) { editing in
-                    if editing {
-                        isDragging = true
-                        dragConfirmed = false
-                        deferredFirstChange = false
-                    } else {
-                        isDragging = false
-                        if !dragConfirmed {
-                            // A click, not a drag: fade every display to the target, the
-                            // same glide the per-display sliders use (DDC pacing included).
-                            // Hold the handle at the target until the fades land, or the
-                            // probe sync would snap it back down through the fade.
-                            clickGliding = true
+                    isDragging = editing
+                    if !editing {
+                        // Drag/click ended, flush final value to all displays.
+                        Task { @MainActor in
                             for display in displays {
-                                BrightnessService.shared.setBrightnessSmooth(
+                                await BrightnessService.shared.setBrightness(
                                     combinedBrightness / 100.0 * display.maxBrightness, for: display)
-                            }
-                            Task { @MainActor in
-                                try? await Task.sleep(nanoseconds: 600_000_000)  // fallback release
-                                clickGliding = false
-                            }
-                        } else {
-                            // Drag ended, flush final value to all displays.
-                            Task { @MainActor in
-                                for display in displays {
-                                    await BrightnessService.shared.setBrightness(
-                                        combinedBrightness / 100.0 * display.maxBrightness, for: display)
-                                }
                             }
                         }
                     }
@@ -326,13 +191,7 @@ struct CombinedBrightnessView: View {
                 .accessibilityValue("\(Int(combinedBrightness))%")
                 .onChange(of: combinedBrightness) { _, newValue in
                     guard isDragging else { return }
-                    if !dragConfirmed {
-                        // First change: could be a click or the start of a drag. Defer the
-                        // write so a click can glide from the old value instead of jumping.
-                        if !deferredFirstChange { deferredFirstChange = true; return }
-                        // Second change: it's a real drag. Go live from here.
-                        dragConfirmed = true
-                    }
+                    // Live write during drag or click.
                     Task { @MainActor in
                         for display in displays {
                             let target = newValue / 100.0 * display.maxBrightness
@@ -342,7 +201,12 @@ struct CombinedBrightnessView: View {
                     }
                 }
 
-                BrightnessStepButton(systemName: "sun.max.fill") { stepAll(10.0) }
+                Text("\(Int(combinedBrightness))%")
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundColor(.secondary)
+                    .frame(width: 36, alignment: .trailing)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 12)
         }
@@ -354,30 +218,12 @@ struct CombinedBrightnessView: View {
             // dragging, when the drag itself is driving the displays.
             ForEach(displays) { display in
                 BrightnessProbe(display: display) {
-                    // While a click-glide runs, hold the handle at the click target and
-                    // release once the fading average reaches it (mirrors the per-display
-                    // slider's clickGliding hold).
-                    if clickGliding {
-                        if abs(averageBrightness - combinedBrightness) < 0.75 { clickGliding = false }
-                        return
-                    }
                     if !isDragging { combinedBrightness = averageBrightness }
                 }
             }
         }
         .onAppear {
             combinedBrightness = averageBrightness
-        }
-    }
-
-    private func stepAll(_ delta: Double) {
-        let target = max(0, min(100, combinedBrightness + delta))
-        // Fade every display with the tuned smooth transition (paces DDC/gamma,
-        // re-targets any in-flight fade). The handle is NOT moved here: it follows
-        // the displays' real brightness via BrightnessProbe, so it glides in exact
-        // sync with the per-display handles instead of lagging a separate ramp.
-        for display in displays {
-            BrightnessService.shared.setBrightnessSmooth(target / 100.0 * display.maxBrightness, for: display)
         }
     }
 }

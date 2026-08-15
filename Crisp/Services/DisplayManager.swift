@@ -160,6 +160,7 @@ class DisplayManager: ObservableObject {
             GammaService.shared.invalidate(for: $0)
             BrightnessBoostService.shared.invalidate(for: $0)
             VolumeService.shared.invalidate(for: $0)
+            DDCFeatureService.shared.invalidate(for: $0)
         }
 
         // Diff-based refresh: keep existing DisplayInfo objects (preserves @Published state)
@@ -191,6 +192,8 @@ class DisplayManager: ObservableObject {
         for display in addedDisplays {
             Task { await BrightnessService.shared.refreshBrightness(for: display) }
             VolumeService.shared.refreshVolume(for: display)
+            DDCFeatureService.shared.refreshContrast(for: display)
+            DDCFeatureService.shared.refreshInputSource(for: display)
             // Monitors often answer DDC with nothing (or garbage) for the first
             // seconds after link training, and a failed connect-time read has no
             // retry: with auto-brightness on the panel poll skips externals, so a
@@ -203,6 +206,8 @@ class DisplayManager: ObservableObject {
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
                     await BrightnessService.shared.refreshBrightness(for: display)
                     VolumeService.shared.refreshVolume(for: display)
+                    DDCFeatureService.shared.refreshContrast(for: display)
+                    DDCFeatureService.shared.refreshInputSource(for: display)
                 }
             }
             Task {
@@ -218,6 +223,14 @@ class DisplayManager: ObservableObject {
                 try? await Task.sleep(nanoseconds: 300_000_000)
                 BrightnessService.shared.reapplySoftwareBrightnessIfNeeded(for: display)
                 GammaService.shared.reapplyIfNeeded(for: display)
+                // Restore saved DDC brightness/contrast/volume (and input, when
+                // that per-display toggle is on). Runs after the 3s delayed
+                // re-read above so the hardware level is fresh before we compare
+                // saved vs current with the deadband.
+                Task {
+                    try? await Task.sleep(nanoseconds: 2_700_000_000)
+                    DDCFeatureService.shared.reapplyDDCStateIfNeeded(for: display)
+                }
             }
         }
 

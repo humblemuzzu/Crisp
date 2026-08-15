@@ -82,6 +82,8 @@ final class VolumeService: ObservableObject {
     func setVolume(_ percent: Double, for display: DisplayInfo) {
         let clamped = max(0.0, min(100.0, percent))
         display.volume = clamped
+        // Persist per stable UUID so reconnect reapply can restore it.
+        DDCFeatureService.shared.persistVolume(clamped, for: display)
         pending[display.displayID] = clamped
         pump(for: display.displayID)
     }

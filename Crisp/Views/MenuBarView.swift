@@ -408,6 +408,7 @@ private struct SupportLinkRow: View {
 
 struct SettingsView: View {
     @ObservedObject private var settings = SettingsService.shared
+    @ObservedObject private var keyService = BrightnessKeyService.shared
     // SettingsView stays mounted (only height-clipped) across panel opens, so the
     // support submenu's expansion must be reset explicitly on close like every
     // other section, or it reopens still expanded.
@@ -548,6 +549,25 @@ struct SettingsView: View {
                 .padding(.vertical, 5)
             }
 
+            // Re-apply saved DDC brightness/contrast/volume when a display
+            // reconnects (input has its own per-display toggle). On by default.
+            Toggle(isOn: Binding(
+                get: { settings.reapplyDDCOnReconnect },
+                set: { newValue in settings.reapplyDDCOnReconnect = newValue }
+            )) {
+                HStack(spacing: 8) {
+                    MenuItemIcon(systemName: "arrow.triangle.2.circlepath", color: .blue, active: settings.reapplyDDCOnReconnect)
+                        .accessibilityHidden(true)
+                    Text("Reapply DDC settings on reconnect")
+                        .font(.body)
+                    Spacer()
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+
             // Which displays the hardware brightness keys adjust. Once Accessibility is granted,
             // an expandable row + checkmark list (the Resolution / Color Profile idiom). Before
             // that there is no row or target subtitle at all, only the opt-in toggle, so enabling
@@ -561,6 +581,23 @@ struct SettingsView: View {
                     subtitle: brightnessTargetName(settings.brightnessKeyTarget),
                     isExpanded: $showBrightnessKeys
                 )
+                // Live status: the tap is armed (keys reach the external display)
+                // or still waiting on Accessibility. No guessing required.
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(keyService.isArmed ? Color.green : Color.orange)
+                        .frame(width: 6, height: 6)
+                        .accessibilityHidden(true)
+                    Text(
+                        keyService.isArmed
+                            ? String(localized: "Keys active — F1/F2 control the display under the cursor")
+                            : String(localized: "Waiting for Accessibility…")
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
                 if showBrightnessKeys {
                     ForEach(BrightnessKeyTarget.allCases, id: \.self) { target in
                         CheckmarkRow(

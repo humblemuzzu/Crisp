@@ -19,6 +19,10 @@ final class MenuPanel: NSPanel {
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var wakeObserver: NSObjectProtocol?
+    /// Recurring trust check that arms the brightness-key tap the moment the
+    /// user grants Accessibility while the app is already running. Stops after
+    /// the tap arms; never prompts (tapCreate only runs once trust is true).
+    private var armPollTimer: Timer?
     private var screenObserver: NSObjectProtocol?
     /// Debounces panel re-anchoring across the storm of screen-param changes a
     /// display connect/disconnect fires (see screenObserver).
@@ -92,16 +96,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if AXIsProcessTrusted() {
             BrightnessKeyService.shared.start()
         } else {
-            // AXIsProcessTrusted() is unreliable at the exact launch instant, especially right
-            // after an upgrade while macOS re-validates the replaced bundle: a user who already
-            // granted access in the prior version would otherwise have the tap silently never arm
-            // (the launch check reads false, and nothing re-arms it since the opt-in toggle is
-            // hidden once trust settles true). Re-check a couple of times as trust settles and arm
-            // if it has; start() is idempotent, and this is bounded so users who never granted
-            // don't poll forever. (upgrade zombie)
-            for delay in [1.0, 3.0] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                    if AXIsProcessTrusted() { BrightnessKeyService.shared.start() }
+            // AXIsProcessTrusted() is unreliable at the exact launch instant, and the user
+            // can grant access at ANY time after launch (System Settings > Accessibility),
+            // not just at startup. Poll trust until it lands, then arm; start() is a no-op
+            // once the tap exists, so an over-long poll is harmless. tapCreate is only called
+            // once trust is actually granted, so this never surfaces the OS prompt itself.
+            self.armPollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
+                // Timers scheduled from the main actor fire on the main run loop.
+                MainActor.assumeIsolated {
+                    if AXIsProcessTrusted() {
+                        BrightnessKeyService.shared.start()
+                        timer.invalidate()
+                        self?.armPollTimer = nil
+                    }
                 }
             }
         }

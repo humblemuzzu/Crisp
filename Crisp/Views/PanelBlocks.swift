@@ -149,6 +149,22 @@ struct DisplayHeaderBlock: View {
                 VolumeSliderView(display: display)
                     .padding(.bottom, 4)
             }
+
+            // DDC hardware contrast (VCP 0x12), shown only for monitors that
+            // answered the contrast probe. This is the monitor's real contrast
+            // control, unlike the software "Contrast" slider under Image
+            // Adjustment (which is a gamma table).
+            if display.contrastSupported {
+                ContrastSliderView(display: display)
+                    .padding(.bottom, 4)
+            }
+
+            // DDC input-source switching (VCP 0x60), shown only when the
+            // monitor answered the probe.
+            if display.inputSourceSupported {
+                InputSourceMenuRow(display: display)
+                    .padding(.bottom, 2)
+            }
         }
         .padding(.top, isFirst ? 0 : 8)
     }

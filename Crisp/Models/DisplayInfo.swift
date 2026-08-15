@@ -25,6 +25,17 @@ class DisplayInfo: ObservableObject, Identifiable {
     /// True once a DDC read of VCP 0x62 succeeded, i.e. the monitor exposes
     /// controllable speaker volume. Gates the volume slider and key routing.
     @Published var volumeSupported: Bool = false
+    /// DDC contrast 0–100 (VCP 0x12). Meaningful only while contrastSupported.
+    @Published var contrast: Double = 50
+    /// True once a DDC read of VCP 0x12 succeeded, i.e. the monitor exposes
+    /// hardware contrast. Gates the contrast slider.
+    @Published var contrastSupported: Bool = false
+    /// Current DDC input source value (VCP 0x60), raw monitor code.
+    @Published var inputSource: UInt16 = 0
+    /// Highest input value the monitor reported (VCP 0x60 reply max).
+    @Published var inputSourceMax: UInt16 = 0
+    /// True once a DDC read of VCP 0x60 succeeded. Gates the input menu.
+    @Published var inputSourceSupported: Bool = false
     @Published var availableModes: [DisplayMode]
     @Published var currentDisplayMode: DisplayMode?
     @Published var ddcValues: [UInt8: UInt16?] = [:]

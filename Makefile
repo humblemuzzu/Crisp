@@ -35,8 +35,15 @@ SWIFTC_FLAGS := -O -swift-version 5 -strict-concurrency=minimal -parse-as-librar
                 -framework AppKit -framework SwiftUI -framework IOKit -framework CoreAudio \
                 -Xlinker -undefined -Xlinker dynamic_lookup
 
+# crispctl shares DDCService + DDCServiceMatcher with the app (same IOKit DDC
+# stack, no private frameworks). Command Line Tools only.
+CRISPCTL_SOURCES := crispctl/*.swift Crisp/Services/DDCService.swift Crisp/Models/DDCServiceMatcher.swift
+CRISPCTL_FLAGS := -O -swift-version 5 -strict-concurrency=minimal -parse-as-library \
+                  -import-objc-header Crisp/Crisp-Bridging-Header.h \
+                  -framework IOKit -framework CoreGraphics
+
 .DEFAULT_GOAL := help
-.PHONY: help dev compile test lint loc-check check build dmg release clean
+.PHONY: help dev compile crispctl test lint loc-check check build dmg release clean
 
 help:
 	@echo "Crisp — make targets:"
@@ -56,6 +63,11 @@ compile:
 	@echo "==> Compiling Crisp $(VERSION) -> ./Crisp-bin"
 	swiftc $(SWIFTC_FLAGS) $(SWIFT_SOURCES) -o Crisp-bin
 	@echo "Done. ./Crisp-bin built (not swapped into the app; use 'make dev' for that)."
+
+crispctl:
+	@echo "==> Compiling crispctl -> ./crispctl-bin"
+	swiftc $(CRISPCTL_FLAGS) $(CRISPCTL_SOURCES) -o crispctl-bin
+	@echo "Done. ./crispctl-bin built. Try: ./crispctl-bin list"
 
 # Warnings are errors here (the baseline is zero, issue #47), so a PR that
 # introduces one fails make check and CI. `make compile` stays permissive for

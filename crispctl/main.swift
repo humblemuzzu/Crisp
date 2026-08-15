@@ -1,0 +1,195 @@
+// crispctl — command-line DDC control for external displays.
+//
+// Shares the exact DDC stack the Crisp app uses (DDCService + DDCServiceMatcher):
+// IOKit-only DDC/CI over the DCPAVServiceProxy I2C bus. No private frameworks.
+//
+//   crispctl list                 enumerate external displays + their DDC values
+//   crispctl get <feature> [id]   read one feature (brightness|contrast|volume|input|power)
+//   crispctl set <feature> <v> [id]  write one feature (value in monitor units, usually 0-100)
+//   crispctl watch [id]           poll brightness every 2s until interrupted
+//
+// Display IDs are the 1-based indices from `crispctl list`; omit to target the
+// only external display (fails if there is more than one).
+
+import Foundation
+import CoreGraphics
+import IOKit
+
+@main
+struct CrispCLI {
+    static func main() {
+        let args = Array(CommandLine.arguments.dropFirst())
+        do {
+            switch args.first ?? "help" {
+            case "list": try list()
+            case "get": try get(args)
+            case "set": try set(args)
+            case "watch": try watch(args)
+            case "help", "-h", "--help": help()
+            default:
+                print("unknown command: \(args[0])")
+                help()
+                exit(2)
+            }
+        } catch {
+            print("error: \(error)")
+            exit(1)
+        }
+    }
+
+    // MARK: - Helpers
+
+    struct ExtDisplay {
+        let index: Int
+        let displayID: CGDirectDisplayID
+        let vendor: UInt32
+        let product: UInt32
+        let serial: UInt32
+    }
+
+    static func externalDisplays() -> [ExtDisplay] {
+        var count: UInt32 = 0
+        CGGetOnlineDisplayList(0, nil, &count)
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        CGGetOnlineDisplayList(count, &ids, &count)
+        var result: [ExtDisplay] = []
+        var idx = 1
+        for id in ids where CGDisplayIsBuiltin(id) == 0 {
+            result.append(ExtDisplay(
+                index: idx, displayID: id,
+                vendor: CGDisplayVendorNumber(id),
+                product: CGDisplayModelNumber(id),
+                serial: CGDisplaySerialNumber(id)))
+            idx += 1
+        }
+        return result
+    }
+
+    static func targetDisplay(_ args: [String], argPos: Int) throws -> ExtDisplay {
+        let displays = externalDisplays()
+        guard !displays.isEmpty else { throw CLIError("no external display connected") }
+        if displays.count == 1, args.count <= argPos {
+            return displays[0]
+        }
+        guard let pos = Int(args[argPos]), displays.indices.contains(pos - 1) else {
+            throw CLIError("specify a display index (1-\(displays.count)) from `crispctl list`")
+        }
+        return displays[pos - 1]
+    }
+
+    struct CLIError: Error, CustomStringConvertible {
+        let message: String
+        init(_ m: String) { message = m }
+        var description: String { message }
+    }
+
+    static func featureCode(_ name: String) throws -> UInt8 {
+        switch name.lowercased() {
+        case "brightness": return 0x10
+        case "contrast": return 0x12
+        case "volume": return 0x62
+        case "input", "input-source": return 0x60
+        case "power": return 0xD6
+        case "red", "gain-red": return 0x6C
+        case "green", "gain-green": return 0x6D
+        case "blue", "gain-blue": return 0x6E
+        default:
+            if let v = UInt8(name.replacingOccurrences(of: "0x", with: ""), radix: 16) { return v }
+            throw CLIError("unknown feature '\(name)' (brightness|contrast|volume|input|power|red|green|blue)")
+        }
+    }
+
+    static func featureName(_ code: UInt8) -> String {
+        switch code {
+        case 0x10: return "brightness"
+        case 0x12: return "contrast"
+        case 0x60: return "input-source"
+        case 0x62: return "volume"
+        case 0xD6: return "power"
+        default: return String(format: "0x%02X", code)
+        }
+    }
+
+    /// Run a DDCService async call and block until its completion fires.
+    static func runAsync<T>(_ start: (@escaping (T) -> Void) -> Void) -> T? {
+        let sem = DispatchSemaphore(value: 0)
+        var result: T?
+        start { r in result = r; sem.signal() }
+        sem.wait()
+        return result
+    }
+
+    // MARK: - Commands
+
+    static func list() throws {
+        let displays = externalDisplays()
+        guard !displays.isEmpty else {
+            print("no external display connected")
+            return
+        }
+        for d in displays {
+            print("[\(d.index)] displayID=\(d.displayID) vendor=0x\(String(format: "%04X", d.vendor)) product=0x\(String(format: "%04X", d.product)) serial=\(d.serial)")
+            for code in [UInt8(0x10), 0x12, 0x60, 0x62] {
+                let name = featureName(code)
+                if let r = runAsync({ cb in DDCService.shared.readAsync(displayID: d.displayID, command: code, completion: cb) }),
+                   let v = r {
+                    print("    \(name): \(v.current)/\(v.max)")
+                } else {
+                    print("    \(name): (unavailable)")
+                }
+            }
+        }
+    }
+
+    static func get(_ args: [String]) throws {
+        guard args.count >= 2 else { throw CLIError("usage: crispctl get <feature> [id]") }
+        let code = try featureCode(args[1])
+        let d = try targetDisplay(args, argPos: 2)
+        guard let r = runAsync({ cb in DDCService.shared.readAsync(displayID: d.displayID, command: code, completion: cb) }),
+              let v = r else {
+            throw CLIError("read failed (display unplugged or feature unsupported)")
+        }
+        print("\(featureName(code)): \(v.current)/\(v.max)")
+    }
+
+    static func set(_ args: [String]) throws {
+        guard args.count >= 3 else { throw CLIError("usage: crispctl set <feature> <value> [id]") }
+        let code = try featureCode(args[1])
+        guard let value = UInt16(args[2]) else { throw CLIError("invalid value '\(args[2])'") }
+        let d = try targetDisplay(args, argPos: 3)
+        let ok = runAsync({ cb in DDCService.shared.writeAsync(displayID: d.displayID, command: code, value: value, completion: cb) })
+        if ok == true {
+            print("set \(featureName(code)) = \(value) on display [\(d.index)]")
+        } else {
+            throw CLIError("write failed (display unplugged?)")
+        }
+    }
+
+    static func watch(_ args: [String]) throws {
+        let d = try targetDisplay(args, argPos: 1)
+        print("watching brightness on display [\(d.index)] ... (ctrl-c to stop)")
+        while true {
+            if let r = runAsync({ cb in DDCService.shared.readAsync(displayID: d.displayID, command: 0x10, completion: cb) }),
+               let v = r {
+                let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+                print("\(stamp) brightness: \(v.current)/\(v.max)")
+            }
+            Thread.sleep(forTimeInterval: 2.0)
+        }
+    }
+
+    static func help() {
+        print("""
+        crispctl — DDC control for external displays
+
+        usage:
+          crispctl list                 enumerate external displays + DDC values
+          crispctl get <feature> [id]   read a feature
+          crispctl set <feature> <v> [id]  write a feature (monitor units, usually 0-100)
+          crispctl watch [id]           poll brightness until interrupted
+
+        features: brightness | contrast | volume | input | power | red | green | blue
+        ids are the 1-based indices from `crispctl list` (omit when only one display).
+        """)
+    }
+}
