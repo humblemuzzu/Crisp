@@ -53,6 +53,7 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         static let ddcCacheTTL            = "crisp.ddcCacheTTL"
         static let colorPickerHistory     = "crisp.colorPickerHistory"
         static let brightnessKeyTarget    = "crisp.brightnessKeyTarget"
+        static let onboardingCompleted    = "crisp.onboarding.completed"
         // Per-display keys use prefix + displayID
         static let brightnessPrefix       = "crisp.brightness_"
         static let contrastPrefix         = "crisp.contrast_"
@@ -68,6 +69,16 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
     /// Whether the first-launch "enable Launch at Login?" prompt has been shown.
     @Published var launchAtLoginPrompted: Bool = false {
         didSet { defaults.set(launchAtLoginPrompted, forKey: Keys.launchAtLoginPrompted) }
+    }
+
+    /// Whether the first-run guide has been through once — finished or skipped,
+    /// which count the same: a guide that reappears after being dismissed is a
+    /// nag. App-level, not per-display (AGENTS.md §3.3 is about display state;
+    /// plugging in a second monitor does not make someone a new user), and the
+    /// only thing that reads it is `OnboardingPlan.shouldPresentAtLaunch`.
+    /// Re-opening the guide by hand (Settings › Setup Guide) leaves it set.
+    @Published var onboardingCompleted: Bool = false {
+        didSet { defaults.set(onboardingCompleted, forKey: Keys.onboardingCompleted) }
     }
 
     @Published var menuWidth: Double = 320 {
@@ -172,6 +183,7 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         // This handles the case where the user toggled it externally or after a fresh install.
         launchAtLogin = LaunchService.shared.isEnabled
         launchAtLoginPrompted = defaults.bool(forKey: Keys.launchAtLoginPrompted)
+        onboardingCompleted = defaults.bool(forKey: Keys.onboardingCompleted)
         menuWidth = defaults.object(forKey: Keys.menuWidth) != nil
             ? defaults.double(forKey: Keys.menuWidth) : 320
         showCombinedBrightness = defaults.object(forKey: Keys.showCombinedBrightness) != nil

@@ -115,6 +115,32 @@ final class DDCProtocolEngine: @unchecked Sendable {
         return nil
     }
 
+    // MARK: - Diagnostics
+
+    /// The read quarantine's state for one display, for the diagnostics report.
+    ///
+    /// Read-only by construction: it neither starts, extends nor clears a
+    /// quarantine, and it puts nothing on the I²C bus. A quarantined display is
+    /// otherwise invisible — reads simply return nil — and "the monitor stopped
+    /// answering" is exactly the symptom a user cannot diagnose without being told
+    /// that the app has deliberately backed off.
+    struct ReadHealth: Equatable, Sendable {
+        let consecutiveReadFailures: Int
+        /// When the quarantine lifts, or `nil` when none is active.
+        let quarantinedUntil: Date?
+    }
+
+    /// Must be called on the same queue as every other entry point (see the
+    /// thread-confinement note on the type): the state it reads is unsynchronised.
+    func readHealth(displayID: CGDirectDisplayID) -> ReadHealth {
+        ReadHealth(
+            consecutiveReadFailures: readFailStreak[displayID, default: 0],
+            // An expired window is not a quarantine: the next read lifts it. Report
+            // what the next read would do, not what a stale dictionary entry says.
+            quarantinedUntil: readQuarantineUntil[displayID].flatMap { $0 > now() ? $0 : nil }
+        )
+    }
+
     // MARK: - Reconnect / disconnect
 
     /// Forgets one display's read-failure history, lifting any quarantine. Called when

@@ -55,14 +55,28 @@ enum BrightnessRung: Equatable {
         /// `.unavailable`) inline under the disabled slider.
         var text: String {
             switch self {
+            // The `\` continuations only wrap the source line: each literal joins
+            // back to exactly one sentence, which is the key in the String Catalog.
             case .noDDCChannel:
-                return String(localized: "This display has no DDC channel on this connection, so Crisp dims the image with the GPU's color table instead of the backlight.")
+                return String(localized: """
+                    This display has no DDC channel on this connection, so Crisp dims \
+                    the image with the GPU's color table instead of the backlight.
+                    """)
             case .hdrIgnoresDDC:
-                return String(localized: "This display is in HDR mode and ignores hardware brightness commands, so Crisp dims the image with the GPU's color table.")
+                return String(localized: """
+                    This display is in HDR mode and ignores hardware brightness \
+                    commands, so Crisp dims the image with the GPU's color table.
+                    """)
             case .virtualDisplay:
-                return String(localized: "Virtual, AirPlay and Sidecar screens have no backlight and no color table of their own, so Crisp dims them with an overlay.")
+                return String(localized: """
+                    Virtual, AirPlay and Sidecar screens have no backlight and no \
+                    color table of their own, so Crisp dims them with an overlay.
+                    """)
             case .gammaRejected:
-                return String(localized: "This display refused the color-table write Crisp uses for software dimming, so Crisp dims it with an overlay.")
+                return String(localized: """
+                    This display refused the color-table write Crisp uses for \
+                    software dimming, so Crisp dims it with an overlay.
+                    """)
             case .notDrawable:
                 return String(localized: "macOS is not rendering to this display, so Crisp has no way to dim it.")
             case .displayOffline:

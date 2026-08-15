@@ -124,6 +124,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             BrightnessBoostService.shared.reapplyAll()
         }
 
+        // First run only: a menu-bar-only app whose best feature needs a
+        // permission has to say so once, or the user finds out by pressing F1 and
+        // watching nothing happen (AGENTS.md §2). Silent on every later launch,
+        // never blocking: the window is closable and the app is fully usable
+        // behind it. Deferred with the same delay as the boost reapply so the
+        // "what was detected" screen has DisplayManager's first list to report;
+        // it follows the list live afterwards, so the delay is politeness, not
+        // correctness.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self else { return }
+            OnboardingWindowController.shared.presentIfFirstRun(displayManager: self.displayManager)
+        }
+
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
             object: nil,
@@ -687,6 +700,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         settingshead.liveInFlight = true
         blocks.append(settingshead)
+        // The way back into the first-run guide, for the user who skipped it and
+        // for whoever is helping them. First row of Settings, and its own block
+        // rather than a row inside SettingsView: it opens a window instead of
+        // changing a setting, exactly like Diagnostics.
+        blocks.append(block("setupguide", isOpen: { state.showSettings }) {
+            SetupGuideRow()
+                .padding(.leading, 8)
+        })
         blocks.append(block("settingsrows", isOpen: { state.showSettings }) {
             SettingsView()
                 .padding(.leading, 8)

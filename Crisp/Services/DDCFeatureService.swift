@@ -201,16 +201,31 @@ final class DDCFeatureService: ObservableObject {
 
     /// Reads VCP 0x60 once. Success marks the monitor input-switch-capable
     /// and adopts the current input code.
+    ///
+    /// It is also where an interrupted calibration is repaired. This runs at
+    /// launch and on every reconnect (see `DisplayManager.refreshDisplays`),
+    /// which are exactly the two moments a monitor left on an unconfirmed input
+    /// by a crashed or killed app becomes reachable again — so the restore rides
+    /// the read that discovers the state it has to repair, rather than needing a
+    /// second, separately-scheduled pass.
     func refreshInputSource(for display: DisplayInfo) {
         guard !display.isBuiltin else { return }
         let id = display.displayID
         quirks(for: display)
         DDCService.shared.readAsync(displayID: id, command: 0x60) { result in
             Task { @MainActor in
-                guard let result, result.max > 0 || result.current > 0 else { return }
-                display.inputSourceSupported = true
-                display.inputSourceMax = result.max
-                display.inputSource = result.current
+                if let result, result.max > 0 || result.current > 0 {
+                    display.inputSourceSupported = true
+                    display.inputSourceMax = result.max
+                    display.inputSource = result.current
+                }
+                // Deliberately outside the guard: a read that answered nothing is
+                // exactly what a panel sitting on a dead input looks like, and
+                // that is the case the repair exists for. `restoreIfInterrupted`
+                // is a no-op unless a pending record is on disk for this display.
+                InputCalibrationService.shared.restoreIfInterrupted(
+                    for: display, currentInput: result?.current
+                )
             }
         }
     }
@@ -280,7 +295,8 @@ final class DDCFeatureService: ObservableObject {
             code: code,
             quirks: quirks(for: display),
             currentInput: display.inputSourceSupported ? display.inputSource : nil,
-            userSelectedInput: savedInput(for: display.stateUUID)
+            userSelectedInput: savedInput(for: display.stateUUID),
+            calibrated: InputCalibrationService.shared.calibratedLabels(for: display.stateUUID)
         )
     }
 
@@ -299,7 +315,8 @@ final class DDCFeatureService: ObservableObject {
         MonitorQuirkResolver.inputOptions(
             quirks: quirks(for: display),
             currentInput: display.inputSource,
-            userSelectedInput: savedInput(for: display.stateUUID)
+            userSelectedInput: savedInput(for: display.stateUUID),
+            calibrated: InputCalibrationService.shared.calibratedLabels(for: display.stateUUID)
         )
     }
 }

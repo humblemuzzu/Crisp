@@ -304,6 +304,49 @@ struct UpdateRow: View {
     }
 }
 
+// MARK: - DiagnosticsRow
+
+/// Opens the Diagnostics window (`DiagnosticsView`).
+///
+/// One row, not a section. Diagnostics matter enormously to the user who needs
+/// them and not at all to everyone else — every competing open-source app leaves
+/// you guessing why a control is missing, and the whole of this fork started with
+/// hours lost to a failure whose only signal was a line in the unified log. So the
+/// answer is discoverable from the panel, and the wall of tables that answers it
+/// stays out of the panel.
+struct DiagnosticsRow: View {
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack {
+            MenuItemIcon(systemName: "stethoscope", color: .teal, active: false)
+            Text("Diagnostics")
+                .font(.body)
+            Spacer()
+            Image(systemName: "arrow.up.forward")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .menuRowHover(isHovered)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard PanelOpenGuard.allowsActivation else { return }
+            DiagnosticsWindowController.shared.show()
+        }
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+        .accessibilityLabel("Diagnostics")
+        .accessibilityHint("Opens a window showing why each display control is or is not available, "
+            + "with a copyable bug report")
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
 // MARK: - SupportRow
 
 /// Optional "buy me a coffee" link at the bottom of Settings, styled as a normal
@@ -651,6 +694,10 @@ struct SettingsView: View {
             .controlSize(.small)
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
+
+            // Sits with the version stamp and the support link: the "something is
+            // wrong / where do I report it" corner of the panel.
+            DiagnosticsRow()
 
             SectionDivider()
 

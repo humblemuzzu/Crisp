@@ -42,6 +42,15 @@ struct DisplayState: Codable, Equatable, Sendable {
     /// Membership of the brightness-key "selected displays" set, used when
     /// `SettingsService.brightnessKeyTarget == .selected`.
     var brightnessKeySelected: Bool?
+    /// Input codes a human physically confirmed on this unit with the
+    /// calibration wizard: they switched to the code and said they could see the
+    /// picture. The only user-side source of `verified` input data in the app.
+    var calibratedInputs: [CalibratedInput]?
+    /// Written *before* a calibration switch and cleared once the monitor is
+    /// back on something the user can see. Its presence at launch means the app
+    /// died with an unconfirmed input code on the panel — see
+    /// `InputCalibrationRecovery`.
+    var pendingInputCalibration: PendingInputCalibration?
 
     init(
         brightness: Double? = nil,
@@ -51,7 +60,9 @@ struct DisplayState: Codable, Equatable, Sendable {
         reapplyInputOnReconnect: Bool? = nil,
         softwareBrightnessFactor: Double? = nil,
         volumeCapable: Bool? = nil,
-        brightnessKeySelected: Bool? = nil
+        brightnessKeySelected: Bool? = nil,
+        calibratedInputs: [CalibratedInput]? = nil,
+        pendingInputCalibration: PendingInputCalibration? = nil
     ) {
         self.brightness = brightness
         self.contrast = contrast
@@ -61,12 +72,49 @@ struct DisplayState: Codable, Equatable, Sendable {
         self.softwareBrightnessFactor = softwareBrightnessFactor
         self.volumeCapable = volumeCapable
         self.brightnessKeySelected = brightnessKeySelected
+        self.calibratedInputs = calibratedInputs
+        self.pendingInputCalibration = pendingInputCalibration
     }
 
     /// Nothing is remembered for this display, so the store can drop the entry
     /// rather than keep an empty object around forever (turning a toggle off
     /// should leave no trace, the same way clearing a `UserDefaults` key did).
     var isEmpty: Bool { self == DisplayState() }
+}
+
+/// One input code whose physical port a human established by looking at the
+/// screen — the evidence `verified` claims (`Crisp/Resources/quirks/README.md`).
+///
+/// Stored per display rather than folded into `DisplayState`'s scalar fields
+/// because it is a list, and per *unit* rather than per model because that is
+/// what the user measured: they confirmed the port on the monitor in front of
+/// them, not on every MA320U ever made. Contributing it to the model-wide
+/// database is a separate, deliberate act (`InputCalibrationReport`).
+struct CalibratedInput: Codable, Equatable, Sendable {
+    /// Raw VCP 0x60 code, as the monitor reports it.
+    var code: UInt16
+    /// What the user says is plugged into it: "USB-C", "HDMI 2".
+    var label: String
+    /// When they confirmed it. Kept so a re-calibration after re-cabling is
+    /// distinguishable from the original measurement in a bug report.
+    var confirmedAt: Date
+}
+
+/// A calibration switch that has been written but not yet confirmed or undone.
+///
+/// This is the whole crash-recovery mechanism. It is written and flushed to disk
+/// *before* the 0x60 write it protects, so a process that dies between the two
+/// leaves behind the one fact needed to put the monitor back: what it was on.
+struct PendingInputCalibration: Codable, Equatable, Sendable {
+    /// The code the monitor was on when the session opened — proven live,
+    /// because the user was looking at the wizard on it.
+    var originalCode: UInt16
+    /// The untested code that was written. Recorded for the log and for a bug
+    /// report; the restore itself only ever needs `originalCode`.
+    var candidateCode: UInt16
+    /// When the trial started, so a stale record can be aged out instead of
+    /// switching inputs on a desk that has been re-cabled since.
+    var startedAt: Date
 }
 
 /// The whole file: `{ "version": 2, "displays": { "<uuid>": { … } } }`.

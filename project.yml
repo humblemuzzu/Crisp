@@ -75,6 +75,37 @@ targets:
       # Foundation only. Its bundle-lookup half, Services/MonitorQuirksService.swift,
       # deliberately stays out of the test target: it holds no decisions.
       - path: Crisp/Models/MonitorQuirks.swift
+      # Diagnostic facts → markdown bug report, and the per-feature support rule
+      # (DisplayDiagnosticsTests). Foundation only; the collection half,
+      # Services/DisplayDiagnosticsService.swift, holds no decisions.
+      - path: Crisp/Models/DisplayDiagnostics.swift
+      # Probe results → a quirks JSON entry (QuirkEntryDraftTests), which those
+      # tests push back through MonitorQuirks' real decoder: a generator whose
+      # output the loader rejects is worse than no generator.
+      - path: Crisp/Models/QuirkEntryDraft.swift
+      # The input-source calibration wizard's decision core: candidate list,
+      # the keep/revert state machine, and the crash-recovery rule
+      # (InputCalibrationTests). Every safety property here has to hold with the
+      # screen black, so all of it is pure and none of it is in the view — which
+      # is also what lets a whole multi-step session be driven headlessly,
+      # without ever executing a VCP 0x60 write.
+      - path: Crisp/Models/InputCalibration.swift
+      # The glue around that state machine (InputCalibrationDriverTests): when a
+      # deferred close may be honoured, when a reconnect may repair a display the
+      # session has given up on, and when a new session may adopt the code the
+      # monitor is on. Three shipped bugs lived in this layer because it used to
+      # sit in Services/ with no coverage; the impure edges (the 0x60 write, the
+      # tick source, the store, the display list) are injected as closures, so it
+      # runs here with no monitor and no write ever issued.
+      - path: Crisp/Models/InputCalibrationDriver.swift
+      # Confirmed session → a `verified` quirks entry. The one generator in the
+      # app allowed to emit `verified`, so its tests push the output back through
+      # MonitorQuirks' decoder and assert the loader agrees.
+      - path: Crisp/Models/InputCalibrationReport.swift
+      # The first-run guide's decision core (OnboardingPlanTests): which screens
+      # to show, what each attached display means, the no-monitor case. Foundation
+      # only; the window and its prose live in Crisp/Views/OnboardingView.swift.
+      - path: Crisp/Models/OnboardingPlan.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.crisp.tests
@@ -103,6 +134,13 @@ targets:
         SWIFT_STRICT_CONCURRENCY: minimal
         SWIFT_OBJC_BRIDGING_HEADER: Crisp/Crisp-Bridging-Header.h
         GENERATE_INFOPLIST_FILE: YES
+        # The entry point is `@main struct CrispCLI` in a file called main.swift,
+        # which Swift otherwise treats as top-level code ("'main' attribute cannot
+        # be used in a module that contains top-level code"). The Makefile's
+        # swiftc line already passes this; without it here, every xcodebuild over
+        # the project fails on this target — including `make loc-check` and CI's
+        # localization step, which build the whole project to extract strings.
+        OTHER_SWIFT_FLAGS: "-parse-as-library"
 
 schemes:
   Crisp:

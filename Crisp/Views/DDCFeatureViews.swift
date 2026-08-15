@@ -79,6 +79,14 @@ struct InputSourceMenuRow: View {
                             }
                         }
                     }
+                    Divider()
+                    // The only way to turn a "?" into a fact. Deliberately in
+                    // the same menu as the guesses it replaces: a user who has
+                    // just been asked to confirm an unverified code is exactly
+                    // the user who should be offered the safe way to find out.
+                    Button("Calibrate…") {
+                        InputCalibrationWindowController.shared.show(for: display)
+                    }
                 } label: {
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.system(size: 11))
@@ -141,7 +149,9 @@ struct InputSourceMenuRow: View {
         // `displayLabel` is a String, so this extracts as a %@ specifier; a raw
         // UInt16 would generate a numeric key that never matches the catalog.
         let warning = String(localized: "Input \(input.displayLabel) is not confirmed on this monitor. If nothing is attached to it the screen goes blank, and the only way back is the monitor's own buttons.")
+        let alternative = String(localized: "Calibrate… switches with a countdown that undoes itself, which is the safe way to find out.")
         // The contributor's note, when there is one, says *why* it is unconfirmed.
-        return input.notes.map { "\(warning)\n\n\($0)" } ?? warning
+        let body = input.notes.map { "\(warning)\n\n\($0)" } ?? warning
+        return "\(body)\n\n\(alternative)"
     }
 }

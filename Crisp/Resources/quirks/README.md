@@ -230,7 +230,36 @@ family — the Samsung U32H750 advertises `0x11`/`0x12`/`0x0F` and actually uses
 `0x05`/`0x06`/`0x0F`, and blindly writing the advertised value is exactly how you
 lose the screen.
 
-The safe way round is to let the *monitor* tell you, using its own buttons:
+There are two safe ways round. Both end with `verified` data; neither involves
+guessing.
+
+#### The wizard (Input Source ▸ Calibrate…)
+
+The app can do this for you, and it is the only path in Crisp that produces
+`verified` input data — because it is the only one where a human physically
+confirms the result. Per code you choose to try, it:
+
+1. records the code the monitor is on **now**, and writes that to disk before
+   anything else;
+2. switches to the candidate;
+3. starts a 15-second countdown and asks "can you see this?" in a window **on the
+   display being calibrated**;
+4. switches back on its own if you do not answer.
+
+Not answering is therefore the safe outcome, which matters because the likely
+failure is that you cannot see the question. The countdown runs on a dispatch
+timer that no window, menu or modal can starve, and the record from step 1 means
+that even a crash or a force-quit mid-switch is repaired: the next time Crisp can
+reach that monitor — next launch, next reconnect — it puts the original input
+back. Unplugging the monitor mid-test is handled the same way.
+
+When you confirm, it asks what is plugged into that port and writes the mapping
+down as `verified` for **your unit**. "Copy Quirks Entry" then turns the session
+into an entry for this directory, which is the part that helps everybody else.
+
+#### By hand, without ever writing 0x60
+
+The other way is to let the *monitor* tell you, using its own buttons:
 
 1. `./crispctl-bin get input` and write the number down.
 2. Switch input **using the monitor's OSD / physical buttons**, to a port you
@@ -243,6 +272,10 @@ That gives you `verified` data. If you have only inferred a code — "the Mac is
 USB-C and the monitor reports 19, so 19 is probably USB-C" — that is `reported`.
 Write it down as `reported` with a `notes` line saying what you inferred it from.
 Someone with the same monitor will finish the job later.
+
+Both routes answer the same question and neither guesses. Use the wizard if the
+monitor's buttons are awkward to reach; use the buttons if you would rather no
+software wrote `0x60` at all.
 
 ---
 

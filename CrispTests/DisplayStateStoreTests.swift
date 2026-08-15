@@ -263,7 +263,7 @@ final class DisplayStateStoreTests: XCTestCase {
     /// Kills mutation: falling back to the synthesized `{"rawValue": …}` coding.
     func testDisplayUUIDEncodesAsABareString() throws {
         let data = try JSONEncoder().encode(uuidA)
-        XCTAssertEqual(String(decoding: data, as: UTF8.self), "\"\(uuidA.rawValue)\"")
+        XCTAssertEqual(String(bytes: data, encoding: .utf8), "\"\(uuidA.rawValue)\"")
 
         let decoded = try JSONDecoder().decode(DisplayUUID.self, from: data)
         XCTAssertEqual(decoded, uuidA)

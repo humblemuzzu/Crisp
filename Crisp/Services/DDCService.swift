@@ -198,4 +198,21 @@ final class DDCService: ObservableObject, @unchecked Sendable {
             }
         }
     }
+
+    // MARK: - Diagnostics
+
+    /// The read quarantine's state for one display, for the diagnostics report.
+    ///
+    /// Hops onto `ddcQueue` because the engine's quarantine state is
+    /// unsynchronised and confined to it. Puts nothing on the I²C bus: it reads
+    /// two dictionaries and returns. Behind whatever DDC work is already queued,
+    /// which is the point — the answer describes the same engine the next real
+    /// read will meet.
+    func readHealth(displayID: CGDirectDisplayID) async -> DDCProtocolEngine.ReadHealth {
+        await withCheckedContinuation { continuation in
+            ddcQueue.async {
+                continuation.resume(returning: self.engine.readHealth(displayID: displayID))
+            }
+        }
+    }
 }

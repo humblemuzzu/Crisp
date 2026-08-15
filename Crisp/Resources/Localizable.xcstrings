@@ -116,6 +116,9 @@
     "∞" : {
       "shouldTranslate" : false
     },
+    "Accessibility looks granted, but macOS is refusing it" : {
+
+    },
     "Activate" : {
       "localizations" : {
         "zh-Hans" : {
@@ -156,6 +159,9 @@
         }
       }
     },
+    "Adds this monitor's EDID serial number and display UUID. They identify one physical unit, so leave this off unless a maintainer asks: they are only needed for two identical monitors whose controls get swapped, or for settings that do not survive a reconnect. Crisp never collects your Mac's serial number, user name or host name." : {
+
+    },
     "Adjustments may affect HDR content!" : {
       "localizations" : {
         "zh-Hans" : {
@@ -186,6 +192,9 @@
           }
         }
       }
+    },
+    "Also in Settings. It explains why any control is missing, and copies a bug report." : {
+
     },
     "Are you sure you want to delete this virtual display configuration?" : {
       "localizations" : {
@@ -219,6 +228,9 @@
         }
       }
     },
+    "At the bottom of the panel: brightness keys, reconnect behaviour, launch at login." : {
+
+    },
     "Auto" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -250,6 +262,9 @@
         }
       }
     },
+    "Back" : {
+
+    },
     "Beta" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -272,7 +287,6 @@
       }
     },
     "Brightness" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -283,6 +297,7 @@
       }
     },
     "Brightness control mode: DDC hardware" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -293,6 +308,7 @@
       }
     },
     "Brightness control mode: Software emulation" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -303,6 +319,7 @@
       }
     },
     "Brightness control mode: System" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -323,6 +340,9 @@
         }
       }
     },
+    "Brightness keys are off" : {
+
+    },
     "Brightness keys need Accessibility access to redirect them to external displays. Grant it once and they start working, no restart." : {
       "localizations" : {
         "zh-Hans" : {
@@ -333,6 +353,9 @@
         }
       }
     },
+    "Bug report copied to the clipboard." : {
+
+    },
     "Built-in Display" : {
       "localizations" : {
         "zh-Hans" : {
@@ -342,6 +365,21 @@
           }
         }
       }
+    },
+    "Calibrate Input Sources" : {
+
+    },
+    "Calibrate…" : {
+
+    },
+    "Calibrate… switches with a countdown that undoes itself, which is the safe way to find out." : {
+
+    },
+    "Calibration stopped. Crisp remembers the input this monitor was on and switches it back when the monitor is next connected." : {
+
+    },
+    "Can you see this?" : {
+
     },
     "Cancel" : {
       "localizations" : {
@@ -495,6 +533,9 @@
         }
       }
     },
+    "Confirmed" : {
+
+    },
     "Contrast" : {
       "localizations" : {
         "zh-Hans" : {
@@ -505,6 +546,18 @@
         }
       }
     },
+    "Control your external monitor" : {
+
+    },
+    "Copied — paste it into a new issue or pull request." : {
+
+    },
+    "Copy" : {
+
+    },
+    "Copy Bug Report" : {
+
+    },
     "Copy Display Name" : {
       "localizations" : {
         "zh-Hans" : {
@@ -514,6 +567,21 @@
           }
         }
       }
+    },
+    "Copy Monitor Report" : {
+
+    },
+    "Copy Quirks Entry" : {
+
+    },
+    "Could not generate the monitor report." : {
+
+    },
+    "Could not reset it automatically. Run this in Terminal, then grant access again:" : {
+
+    },
+    "Could not switch the monitor back" : {
+
     },
     "Create" : {
       "localizations" : {
@@ -577,6 +645,27 @@
           }
         }
       }
+    },
+    "Crisp can still dim these, but by darkening the image rather than the backlight. That is usually a cable or hub in the way (DisplayLink adapters and some MST hubs carry no DDC), or DDC/CI switched off in the monitor's own menu." : {
+
+    },
+    "Crisp controls external monitors, and right now only your Mac's own display is connected." : {
+
+    },
+    "Crisp controls external monitors, and there are none connected right now." : {
+
+    },
+    "Crisp Diagnostics" : {
+
+    },
+    "Crisp lives in the menu bar. Click the screen-and-sparkles icon to open the panel; there is no Dock icon and no window to keep track of." : {
+
+    },
+    "Crisp switches the monitor to the code you pick, then waits 15 seconds for you to confirm you can still see this window. If you do not, it switches back by itself." : {
+
+    },
+    "Crisp talks to the monitor itself over DDC/CI, the control channel built into the display cable. The controls move the monitor's own settings, exactly as its buttons would." : {
+
     },
     "Crisp v%@" : {
       "shouldTranslate" : false
@@ -646,6 +735,9 @@
     "DDC" : {
       "shouldTranslate" : false
     },
+    "DDC/CI is working — brightness moves the monitor's backlight." : {
+
+    },
     "Deactivate" : {
       "localizations" : {
         "zh-Hans" : {
@@ -665,6 +757,9 @@
           }
         }
       }
+    },
+    "Diagnostics" : {
+
     },
     "Disconnect Display" : {
       "localizations" : {
@@ -759,6 +854,9 @@
         }
       }
     },
+    "Done" : {
+
+    },
     "Edit…" : {
       "localizations" : {
         "zh-Hans" : {
@@ -779,6 +877,9 @@
           }
         }
       }
+    },
+    "Every one of these depends on what your monitor answers. Crisp shows a control only for the ones it confirmed, and the next screen lists what it found." : {
+
     },
     "External displays follow the built-in but keep the difference you set" : {
       "localizations" : {
@@ -972,6 +1073,9 @@
         }
       }
     },
+    "Grant Accessibility Access" : {
+
+    },
     "gray" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1073,6 +1177,12 @@
         }
       }
     },
+    "in use now" : {
+
+    },
+    "Include per-unit display identifiers" : {
+
+    },
     "indigo" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1083,6 +1193,15 @@
         }
       }
     },
+    "Input %@ is not confirmed on this monitor. If nothing is attached to it the screen goes blank, and the only way back is the monitor's own buttons." : {
+
+    },
+    "Input source" : {
+
+    },
+    "Input Source" : {
+
+    },
     "Invert Colors" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1092,6 +1211,9 @@
           }
         }
       }
+    },
+    "Keep" : {
+
     },
     "Keep Awake" : {
       "localizations" : {
@@ -1113,6 +1235,9 @@
         }
       }
     },
+    "Keys active — F1/F2 control the display under the cursor" : {
+
+    },
     "Larger Text" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1132,6 +1257,9 @@
           }
         }
       }
+    },
+    "Let the brightness keys reach your monitor" : {
+
     },
     "Loading profiles…" : {
       "localizations" : {
@@ -1156,6 +1284,12 @@
     "macOS is not rendering to this display, so Crisp has no way to dim it." : {
 
     },
+    "macOS is refusing the keyboard tap even though the permission looks granted. That happens when Crisp was rebuilt or replaced: the old permission is recorded against the previous copy of the app. Resetting it lets you grant it again to this one." : {
+
+    },
+    "macOS sends F1 and F2 to your Mac's own screen and nowhere else. To redirect them to the monitor under the pointer, Crisp has to watch for those two keys, and macOS only allows that with Accessibility access." : {
+
+    },
     "Main" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1177,6 +1311,9 @@
           }
         }
       }
+    },
+    "Monitor report copied — paste it into a new issue or pull request." : {
+
     },
     "More Space" : {
       "localizations" : {
@@ -1230,6 +1367,9 @@
         }
       }
     },
+    "Next" : {
+
+    },
     "Night" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1272,6 +1412,9 @@
         }
       }
     },
+    "No displays are attached." : {
+
+    },
     "No virtual displays yet" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1281,6 +1424,9 @@
           }
         }
       }
+    },
+    "Nobody confirmed the last switch, so it was undone — that input is probably not showing this Mac." : {
+
     },
     "Non-HiDPI" : {
       "localizations" : {
@@ -1292,6 +1438,9 @@
         }
       }
     },
+    "not mapped yet" : {
+
+    },
     "Notch" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1302,6 +1451,12 @@
           }
         }
       }
+    },
+    "Nothing has been confirmed yet, so there is nothing to report." : {
+
+    },
+    "Nothing is broken — plug a monitor in and its controls appear in the menu bar panel by themselves. Crisp deliberately leaves the rest of your displays alone." : {
+
     },
     "Off" : {
       "localizations" : {
@@ -1333,6 +1488,12 @@
           }
         }
       }
+    },
+    "One section per monitor, with the controls that monitor actually supports." : {
+
+    },
+    "Open Accessibility Settings" : {
+
     },
     "Open in System Settings" : {
       "localizations" : {
@@ -1388,6 +1549,9 @@
         }
       }
     },
+    "Permission cleared. Switch Crisp back on in Privacy & Security › Accessibility — the keys arm themselves once you do, no restart." : {
+
+    },
     "Personal" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1428,6 +1592,9 @@
           }
         }
       }
+    },
+    "Port name" : {
+
     },
     "Preset" : {
       "extractionState" : "stale",
@@ -1523,6 +1690,12 @@
         }
       }
     },
+    "Reapply DDC settings on reconnect" : {
+
+    },
+    "Reapply input on reconnect" : {
+
+    },
     "Recommended" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1562,6 +1735,9 @@
           }
         }
       }
+    },
+    "Refresh" : {
+
     },
     "Refresh Rate" : {
       "extractionState" : "stale",
@@ -1603,6 +1779,9 @@
           }
         }
       }
+    },
+    "Reset permission" : {
+
     },
     "Resolution" : {
       "localizations" : {
@@ -1676,7 +1855,6 @@
       }
     },
     "Settings" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1685,6 +1863,9 @@
           }
         }
       }
+    },
+    "Setup Guide" : {
+
     },
     "Show all resolutions" : {
       "localizations" : {
@@ -1716,6 +1897,9 @@
         }
       }
     },
+    "Skip" : {
+
+    },
     "Smooth scaling" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1727,6 +1911,7 @@
       }
     },
     "Software" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1746,6 +1931,16 @@
         }
       }
     },
+    "Step %lld of %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Step %1$lld of %2$lld"
+          }
+        }
+      }
+    },
     "Support Crisp" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1757,6 +1952,12 @@
         }
       }
     },
+    "Switch" : {
+
+    },
+    "Switch Back Now" : {
+
+    },
     "Switch failed, please try again" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1766,6 +1967,18 @@
           }
         }
       }
+    },
+    "Switch input?" : {
+
+    },
+    "Switch which machine the monitor is showing, without reaching for its buttons." : {
+
+    },
+    "Switching back to input %@…" : {
+
+    },
+    "Switching to input %@…" : {
+
     },
     "Syncing with built-in display brightness" : {
       "localizations" : {
@@ -1808,10 +2021,53 @@
         }
       }
     },
+    "Test" : {
+
+    },
+    "That's it" : {
+
+    },
     "The built-in panel's own backlight, through IOKit." : {
 
     },
+    "The last switch was undone at your request." : {
+
+    },
+    "The monitor did not acknowledge the last switch, so it was undone." : {
+
+    },
+    "The monitor did not acknowledge the switch back to input %@. If the screen is blank, use the monitor's own buttons to change its input. Crisp will try again the next time it can reach this monitor." : {
+
+    },
+    "The monitor is now on input %@. If this window is on screen, click Keep. Doing nothing switches the monitor back in %@ seconds." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The monitor is now on input %1$@. If this window is on screen, click Keep. Doing nothing switches the monitor back in %2$@ seconds."
+          }
+        }
+      }
+    },
+    "The monitor was disconnected" : {
+
+    },
+    "The monitor's built-in speakers, for the monitors that have them." : {
+
+    },
     "The monitor's own backlight, over DDC/CI." : {
+
+    },
+    "The monitor's own contrast setting, when it exposes one." : {
+
+    },
+    "The panel" : {
+
+    },
+    "The real backlight, not a dark filter drawn over the image." : {
+
+    },
+    "These are the monitors Crisp can see. The menu bar panel gets one section for each." : {
 
     },
     "This display has no DDC channel on this connection, so Crisp dims the image with the GPU's color table instead of the backlight." : {
@@ -1824,6 +2080,9 @@
 
     },
     "This display refused the color-table write Crisp uses for software dimming, so Crisp dims it with an overlay." : {
+
+    },
+    "This is the one permission Crisp asks for, and it is only for the keys. Sliders, contrast, volume and input all work without it." : {
 
     },
     "This virtual display is currently active. Deleting it will disable it immediately." : {
@@ -1921,6 +2180,9 @@
         }
       }
     },
+    "Use the name printed on the monitor, e.g. USB-C or HDMI 2. This is the only thing Crisp treats as confirmed: you saw the picture on this code." : {
+
+    },
     "v%@" : {
       "shouldTranslate" : false
     },
@@ -1956,9 +2218,6 @@
         }
       }
     },
-    "Virtual, AirPlay and Sidecar screens have no backlight and no color table of their own, so Crisp dims them with an overlay." : {
-
-    },
     "Virtual display options" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1979,6 +2238,24 @@
           }
         }
       }
+    },
+    "Virtual, AirPlay and Sidecar screens have no backlight and no color table of their own, so Crisp dims them with an overlay." : {
+
+    },
+    "Volume" : {
+
+    },
+    "Waiting for Accessibility…" : {
+
+    },
+    "Welcome to Crisp" : {
+
+    },
+    "What Crisp found" : {
+
+    },
+    "What is plugged into input %@?" : {
+
     },
     "Width" : {
       "localizations" : {
@@ -2010,6 +2287,15 @@
           }
         }
       }
+    },
+    "You can also turn this on later: the panel's Settings section has the same switch." : {
+
+    },
+    "You can reopen this guide any time from Settings › Setup Guide." : {
+
+    },
+    "Your Mac's own display." : {
+
     }
   },
   "version" : "1.0"

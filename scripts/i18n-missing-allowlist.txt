@@ -11,3 +11,61 @@ Reapply input on reconnect
 Switch input?
 Switch
 Input %@ is not confirmed on this monitor. If nothing is attached to it the screen goes blank, and the only way back is the monitor's own buttons.
+
+# The fork's diagnostics window (Crisp/Views/DiagnosticsView.swift) and its
+# entry point (Crisp/Views/MenuBarView.swift). English only for now. The
+# diagnostic *content* is deliberately not localized at all: it is rendered with
+# Text(verbatim:) because it is generated prose destined for a GitHub issue, and
+# a bug report a maintainer cannot read is not a bug report.
+Diagnostics
+Crisp Diagnostics
+Copy Bug Report
+Copy Monitor Report
+Refresh
+No displays are attached.
+Include per-unit display identifiers
+Adds this monitor's EDID serial number and display UUID. They identify one physical unit, so leave this off unless a maintainer asks: they are only needed for two identical monitors whose controls get swapped, or for settings that do not survive a reconnect. Crisp never collects your Mac's serial number, user name or host name.
+Bug report copied to the clipboard.
+Monitor report copied — paste it into a new issue or pull request.
+Could not generate the monitor report.
+
+# The fork's first-run guide (Crisp/Views/OnboardingView.swift) and its entry
+# point in Settings. English only for now — the guide's job is to be readable on
+# day one, and shipping it untranslated is better than shipping it not at all.
+# "Volume" and "Input source" are shared with other views; listed once, here.
+At the bottom of the panel: brightness keys, reconnect behaviour, launch at login.
+Back
+Control your external monitor
+Crisp can still dim these, but by darkening the image rather than the backlight. That is usually a cable or hub in the way (DisplayLink adapters and some MST hubs carry no DDC), or DDC/CI switched off in the monitor's own menu.
+Crisp controls external monitors, and right now only your Mac's own display is connected.
+Crisp controls external monitors, and there are none connected right now.
+Crisp lives in the menu bar. Click the screen-and-sparkles icon to open the panel; there is no Dock icon and no window to keep track of.
+Crisp talks to the monitor itself over DDC/CI, the control channel built into the display cable. The controls move the monitor's own settings, exactly as its buttons would.
+DDC/CI is working — brightness moves the monitor's backlight.
+Done
+Every one of these depends on what your monitor answers. Crisp shows a control only for the ones it confirmed, and the next screen lists what it found.
+Grant Accessibility Access
+Also in Settings. It explains why any control is missing, and copies a bug report.
+Input source
+Let the brightness keys reach your monitor
+Next
+Nothing is broken — plug a monitor in and its controls appear in the menu bar panel by themselves. Crisp deliberately leaves the rest of your displays alone.
+One section per monitor, with the controls that monitor actually supports.
+Setup Guide
+Skip
+Step %lld of %lld
+Switch which machine the monitor is showing, without reaching for its buttons.
+That's it
+The monitor's built-in speakers, for the monitors that have them.
+The monitor's own contrast setting, when it exposes one.
+The panel
+The real backlight, not a dark filter drawn over the image.
+These are the monitors Crisp can see. The menu bar panel gets one section for each.
+This is the one permission Crisp asks for, and it is only for the keys. Sliders, contrast, volume and input all work without it.
+Volume
+Welcome to Crisp
+What Crisp found
+You can also turn this on later: the panel's Settings section has the same switch.
+You can reopen this guide any time from Settings › Setup Guide.
+Your Mac's own display.
+macOS sends F1 and F2 to your Mac's own screen and nowhere else. To redirect them to the monitor under the pointer, Crisp has to watch for those two keys, and macOS only allows that with Accessibility access.

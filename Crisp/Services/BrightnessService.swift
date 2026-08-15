@@ -275,6 +275,25 @@ final class BrightnessService: @unchecked Sendable {
     /// the other per-display capability facts the rung is derived from.
     private var gammaRejected: Set<CGDirectDisplayID> = []
 
+    /// What this service currently believes about DDC on one display, for the
+    /// diagnostics report: nil = unproven, true = proven, false = given up.
+    ///
+    /// Read-only, and deliberately the *same* stored value `refreshRung` feeds to
+    /// `BrightnessRung.resolve`, so the report cannot disagree with the badge the
+    /// user sees on the slider. Also the reason the report can say "unproven"
+    /// rather than flattening it to "no": nothing has failed on such a display,
+    /// nothing has been tried.
+    func ddcAvailability(for displayID: CGDirectDisplayID) -> Bool? {
+        ddcAvailableLock.withLock { ddcAvailable[displayID] }
+    }
+
+    /// The raw DDC brightness maximum the monitor reported, or nil if no read has
+    /// answered yet. Diagnostics only; the write path reads the same dictionary
+    /// under the same lock (see `setDDCBrightness`).
+    func ddcBrightnessMax(for displayID: CGDirectDisplayID) -> UInt16? {
+        ddcAvailableLock.withLock { ddcMaxBrightness[displayID] }
+    }
+
     // MARK: - Brightness Rung (the fallback ladder)
 
     /// Resolves which rung of the ladder a display is on, records it on the
@@ -385,8 +404,6 @@ final class BrightnessService: @unchecked Sendable {
             case .ddcHardware:
                 break
             }
-
-
 
             DDCService.shared.readAsync(
                 displayID: displayID,

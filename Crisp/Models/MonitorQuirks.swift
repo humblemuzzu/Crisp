@@ -1,29 +1,29 @@
 import Foundation
 
-/// The monitor quirks database: what real monitors *do*, as opposed to what the
-/// VESA MCCS standard says they should do.
-///
-/// Why this exists at all. Monitors deviate from MCCS constantly and the
-/// monitor's own capabilities string (DDC/CI command 0xF3) is not a fix: ddcutil
-/// reads it and then deliberately ignores it for command formulation, because
-/// "the only way to know for sure is by testing using getvcp and setvcp".
-/// Documented deviations that motivated the format:
-///
-/// - Samsung U32H750 advertises input codes 0x11/0x12/0x0F but really uses
-///   0x05/0x06/0x0F — an advertised code that switches the panel to a dead port.
-/// - Iiyama PL2492H reverts every write unless a "save current settings" command
-///   follows it.
-/// - LG 27MU67 accepts a brightness write and then undoes it about a second later.
-/// - Dell 2407wfp cannot go below raw brightness 30; its usable range is 30–50.
-/// - Several monitors never set the "unsupported feature" reply bit, so probing
-///   cannot detect what is missing.
-/// - The BenQ MA320U this fork was built for reports input source `19`, which is
-///   not a meaningful VESA code.
-///
-/// This file is the whole decision core: decoding, merging and resolution, all
-/// pure. No `Bundle`, no file system, no IOKit — `MonitorQuirksService` owns that
-/// half — so it compiles into the headless `CrispTests` target the same way
-/// `DDCServiceMatcher` and `DisplayStateDocument` do.
+// The monitor quirks database: what real monitors *do*, as opposed to what the
+// VESA MCCS standard says they should do.
+//
+// Why this exists at all. Monitors deviate from MCCS constantly and the
+// monitor's own capabilities string (DDC/CI command 0xF3) is not a fix: ddcutil
+// reads it and then deliberately ignores it for command formulation, because
+// "the only way to know for sure is by testing using getvcp and setvcp".
+// Documented deviations that motivated the format:
+//
+// - Samsung U32H750 advertises input codes 0x11/0x12/0x0F but really uses
+//   0x05/0x06/0x0F — an advertised code that switches the panel to a dead port.
+// - Iiyama PL2492H reverts every write unless a "save current settings" command
+//   follows it.
+// - LG 27MU67 accepts a brightness write and then undoes it about a second later.
+// - Dell 2407wfp cannot go below raw brightness 30; its usable range is 30–50.
+// - Several monitors never set the "unsupported feature" reply bit, so probing
+//   cannot detect what is missing.
+// - The BenQ MA320U this fork was built for reports input source `19`, which is
+//   not a meaningful VESA code.
+//
+// This file is the whole decision core: decoding, merging and resolution, all
+// pure. No `Bundle`, no file system, no IOKit — `MonitorQuirksService` owns that
+// half — so it compiles into the headless `CrispTests` target the same way
+// `DDCServiceMatcher` and `DisplayStateDocument` do.
 
 // MARK: - Identity
 
@@ -506,6 +506,13 @@ struct MonitorQuirksDatabase: Equatable, Sendable {
 /// the resolver stamps this tier `reported`.
 enum MCCSInputTable {
     static func label(for value: UInt16) -> String? {
+        // The two tables are disjoint by construction (0x01–0x0B against
+        // 0x0C–0x3F), so the order of this fallback is documentation, not policy.
+        singletonLabel(for: value) ?? bankedLabel(for: value)
+    }
+
+    /// The codes MCCS names one at a time, each with its own connector.
+    private static func singletonLabel(for value: UInt16) -> String? {
         switch value {
         case 0x01: return "VGA-1"
         case 0x02: return "VGA-2"
@@ -518,6 +525,15 @@ enum MCCSInputTable {
         case 0x09: return "Tuner-1"
         case 0x0A: return "Tuner-2"
         case 0x0B: return "Tuner-3"
+        default: return nil
+        }
+    }
+
+    /// The codes MCCS allocates in consecutive banks, where the connector number
+    /// is the offset within the bank. DVI's bank starts at 3 because 0x03/0x04
+    /// already took DVI-1 and DVI-2 above.
+    private static func bankedLabel(for value: UInt16) -> String? {
+        switch value {
         case 0x0C...0x13: return "DVI-\(value - 0x0C + 3)"
         case 0x14...0x1D: return "DisplayPort-\(value - 0x14 + 1)"
         case 0x20...0x2F: return "HDMI-\(value - 0x20 + 1)"
@@ -624,20 +640,31 @@ enum MonitorQuirkResolver {
     /// - `userSelectedInput`: the code the user last picked themselves and whose
     ///   screen survived it — the user-override tier, and the strongest evidence
     ///   there is that this particular code works on this particular unit.
+    /// - `calibrated`: codes this user confirmed with the calibration wizard,
+    ///   code → the port name they gave it. Stronger still, and the only source
+    ///   of a `verified` *label*: the user watched the panel light up on that
+    ///   code and then typed what was plugged into it. Everything else in this
+    ///   function is either a specification's guess or a stranger's.
     static func input(
         code: UInt16,
         quirks: MonitorQuirks?,
         currentInput: UInt16?,
-        userSelectedInput: UInt16?
+        userSelectedInput: UInt16?,
+        calibrated: [UInt16: String] = [:]
     ) -> ResolvedInput {
         let quirkValue = quirks?.inputValue(for: code)
+        let calibratedLabel = calibrated[code]
 
         // Label: database first, then the MCCS table, then the bare number. A
         // number is honest about being unknown, so it counts as verified fact.
         let label: String
         let labelSource: QuirkSource
         let labelConfidence: QuirkConfidence
-        if let quirkValue {
+        if let calibratedLabel {
+            label = calibratedLabel
+            labelSource = .userOverride
+            labelConfidence = .verified
+        } else if let quirkValue {
             label = quirkValue.label
             labelSource = .database
             labelConfidence = quirkValue.confidence
@@ -655,7 +682,8 @@ enum MonitorQuirkResolver {
         // already chose it, the monitor is on it, or a human verified it on this
         // model. A `reported` database entry explicitly does not.
         let switchConfidence: QuirkConfidence
-        if code == userSelectedInput || code == currentInput || quirkValue?.confidence.isVerified == true {
+        if calibratedLabel != nil || code == userSelectedInput || code == currentInput
+            || quirkValue?.confidence.isVerified == true {
             switchConfidence = .verified
         } else {
             switchConfidence = .reported
@@ -679,9 +707,14 @@ enum MonitorQuirkResolver {
         quirks: MonitorQuirks?,
         currentInput: UInt16,
         userSelectedInput: UInt16?,
+        calibrated: [UInt16: String] = [:],
         standardCodes: [UInt16] = MCCSInputTable.commonCodes
     ) -> [ResolvedInput] {
         var codes: [UInt16] = [currentInput]
+        // Before the database: a port this user measured on this unit outranks
+        // anything a contributor wrote down about the model, and it must appear
+        // even when the database's list is declared complete without it.
+        codes.append(contentsOf: calibrated.keys.sorted())
         codes.append(contentsOf: quirks?.inputValues.map(\.code) ?? [])
         // Only a port list a contributor has declared complete may replace the
         // generic VESA codes. A partial map — the MA320U has one inferred code
@@ -694,7 +727,10 @@ enum MonitorQuirkResolver {
         var seen: Set<UInt16> = []
         return codes.compactMap { code in
             guard seen.insert(code).inserted else { return nil }
-            return input(code: code, quirks: quirks, currentInput: currentInput, userSelectedInput: userSelectedInput)
+            return input(
+                code: code, quirks: quirks, currentInput: currentInput,
+                userSelectedInput: userSelectedInput, calibrated: calibrated
+            )
         }
     }
 }
