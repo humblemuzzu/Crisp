@@ -687,11 +687,85 @@ final class BrightnessService: @unchecked Sendable {
 
     // MARK: - Software Brightness (Gamma Table Fallback)
 
-    /// Applies brightness via gamma table manipulation for displays where DDC is unavailable.
-    /// Uses a linear ramp from 0 to `factor` so white level is dimmed while black stays black.
-    /// brightness: 0–100 (percentage); never goes fully to 0 to avoid a completely black screen.
-    /// Above 100 (external boost region, monitor in HDR mode) the same ramp scales past 1.0,
-    /// pushing SDR content into the HDR wire range; the monitor tone-maps the result.
+    // MARK: - Baseline (ColorSync) gamma
+
+    /// The transfer table ColorSync installed for each display, captured before Crisp writes
+    /// one of its own. Software dimming SCALES this rather than replacing it.
+    ///
+    /// This matters more than it looks. A monitor ships with a calibrated tone curve, which
+    /// macOS loads from the display's colour profile into the video card gamma table. Writing
+    /// a synthetic straight-line ramp — which this code used to do at every brightness level,
+    /// including a factor of 1.0 — discards that curve wholesale: blacks lift, the colour cast
+    /// the panel was calibrated for disappears, and everything reads flat and washed out even
+    /// at a comfortable brightness.
+    private var baselineGamma: [CGDirectDisplayID: GammaTable] = [:]
+    private let baselineGammaLock = NSLock()
+    /// ColorSync is restored once per app run before the first baseline capture, so the
+    /// baseline can never be a table Crisp itself left behind in an earlier session.
+    private var didRestoreColorSyncForBaseline = false
+
+    struct GammaTable {
+        var red: [CGGammaValue]
+        var green: [CGGammaValue]
+        var blue: [CGGammaValue]
+        var count: Int { red.count }
+
+        /// A straight-line ramp, used only when the display refuses to report its table.
+        static func linear(count: Int) -> GammaTable {
+            let values = (0..<count).map { CGGammaValue(Float($0) / Float(max(count - 1, 1))) }
+            return GammaTable(red: values, green: values, blue: values)
+        }
+    }
+
+    /// The display's own table, captured once. Must run before any Crisp gamma write for that
+    /// display, which it does: every write path builds its output from this.
+    private func baselineGammaTable(for displayID: CGDirectDisplayID) -> GammaTable {
+        if let cached = baselineGammaLock.withLock({ baselineGamma[displayID] }) { return cached }
+
+        // Undo anything a previous session left in the table before reading it. Guarded so a
+        // multi-display setup only takes the one restore.
+        let needsRestore = baselineGammaLock.withLock { () -> Bool in
+            guard !didRestoreColorSyncForBaseline else { return false }
+            didRestoreColorSyncForBaseline = true
+            return true
+        }
+        if needsRestore {
+            CGDisplayRestoreColorSyncSettings()
+        }
+
+        let capacity = 256
+        var red = [CGGammaValue](repeating: 0, count: capacity)
+        var green = [CGGammaValue](repeating: 0, count: capacity)
+        var blue = [CGGammaValue](repeating: 0, count: capacity)
+        var sampleCount: UInt32 = 0
+        let err = CGGetDisplayTransferByTable(
+            displayID, UInt32(capacity), &red, &green, &blue, &sampleCount
+        )
+
+        let table: GammaTable
+        if err == .success, sampleCount > 1 {
+            let n = Int(sampleCount)
+            table = GammaTable(
+                red: Array(red[0..<n]), green: Array(green[0..<n]), blue: Array(blue[0..<n])
+            )
+        } else {
+            // Reading failed: fall back to a straight ramp so dimming still works. Colour
+            // fidelity is lost, but a dead brightness control would be worse.
+            table = .linear(count: capacity)
+        }
+
+        baselineGammaLock.withLock { baselineGamma[displayID] = table }
+        return table
+    }
+
+    /// Applies brightness by scaling the display's own transfer table, for the region below
+    /// CombinedBrightness's switchover and for displays where DDC is unavailable.
+    /// brightness: 0–100 (percentage); never reaches 0 so the screen cannot go fully black.
+    /// Above 100 (external boost region, monitor in HDR mode) the same scaling continues past
+    /// 1.0, pushing SDR content into the HDR wire range; the monitor tone-maps the result.
+    ///
+    /// Scaling the baseline rather than writing a fresh ramp is what preserves the monitor's
+    /// calibrated colour at every level, and makes a factor of 1.0 an exact restoration.
     ///
     /// If GammaService has an active adjustment for this display, it delegates to GammaService
     /// so the two do not overwrite each other's CGSetDisplayTransfer* call.
@@ -706,21 +780,24 @@ final class BrightnessService: @unchecked Sendable {
             return
         }
 
-        // No active gamma adjustment, write a plain dimmed ramp directly.
-        let floatFactor = Float(factor)
-        let tableSize: UInt32 = 256
-        var red   = [CGGammaValue](repeating: 0, count: Int(tableSize))
-        var green = [CGGammaValue](repeating: 0, count: Int(tableSize))
-        var blue  = [CGGammaValue](repeating: 0, count: Int(tableSize))
+        let baseline = baselineGammaTable(for: displayID)
 
-        for i in 0..<Int(tableSize) {
-            let v = CGGammaValue(Float(i) / Float(tableSize - 1) * floatFactor)
-            red[i]   = v
-            green[i] = v
-            blue[i]  = v
+        // Exact restoration at 1.0: write the captured table back untouched rather than a
+        // recomputed one, so no float rounding creeps into the colour curve.
+        if abs(factor - 1.0) < 0.0001 {
+            var red = baseline.red
+            var green = baseline.green
+            var blue = baseline.blue
+            _ = CGSetDisplayTransferByTable(displayID, UInt32(baseline.count), &red, &green, &blue)
+            return
         }
 
-        _ = CGSetDisplayTransferByTable(displayID, tableSize, &red, &green, &blue)
+        let floatFactor = Float(factor)
+        var red = baseline.red.map { CGGammaValue($0 * floatFactor) }
+        var green = baseline.green.map { CGGammaValue($0 * floatFactor) }
+        var blue = baseline.blue.map { CGGammaValue($0 * floatFactor) }
+
+        _ = CGSetDisplayTransferByTable(displayID, UInt32(baseline.count), &red, &green, &blue)
     }
 
     /// External boost region: BrightnessBoostService drives the transfer table
@@ -732,14 +809,15 @@ final class BrightnessService: @unchecked Sendable {
         }
     }
 
-    /// Resets the gamma table for a display back to the identity curve.
+    /// Restores the display's own transfer table, undoing any software dimming.
+    /// Writes the captured ColorSync baseline rather than a straight ramp, so the monitor's
+    /// calibrated colour comes back rather than being flattened.
     func resetSoftwareBrightness(for displayID: CGDirectDisplayID) {
-        let size = 256
-        let values = (0..<size).map { CGGammaValue($0) / CGGammaValue(size - 1) }
-        var red = values
-        var green = values
-        var blue = values
-        CGSetDisplayTransferByTable(displayID, UInt32(size), &red, &green, &blue)
+        let baseline = baselineGammaTable(for: displayID)
+        var red = baseline.red
+        var green = baseline.green
+        var blue = baseline.blue
+        CGSetDisplayTransferByTable(displayID, UInt32(baseline.count), &red, &green, &blue)
     }
 
     /// Returns whether DDC is available for the given display.
