@@ -117,6 +117,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // it only starts the first time the menu panel is opened (its only other ref).
         _ = AutoBrightnessService.shared
 
+        // Same reason: the group-sync observer is installed in the service's
+        // init, and a group has to follow a brightness change made from the
+        // keyboard, not only from a panel that has been opened once.
+        _ = DisplayGroupService.shared
+
+        // The schedule tick, which also fires on wake — a 22:00 that passed
+        // while the Mac was asleep applies once when it comes back, and a
+        // schedule that has already fired for that occurrence does not.
+        PresetScheduleService.shared.start()
+
         // Re-establish Extra Brightness (EDR upscaling) for displays whose
         // toggle is persisted on. Deferred a beat so DisplayManager's initial
         // display list is populated.

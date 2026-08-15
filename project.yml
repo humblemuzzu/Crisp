@@ -76,6 +76,23 @@ targets:
       - path: Crisp/Models/GammaPersistenceKey.swift
       - path: Crisp/Models/DisplayUUID.swift
       - path: Crisp/Models/DisplayStateDocument.swift
+      # Forward compatibility for the document: the unknown-field bag that makes
+      # a rollback lossless, and the element-wise list decode that stops one bad
+      # schedule from costing the user their brightness (DisplayStateStoreTests).
+      - path: Crisp/Models/JSONValue.swift
+      # Display groups and the brightness-sync arithmetic (BrightnessSyncTests).
+      # Pure: which member ends up at what percentage, the origin token that makes
+      # a propagation one level deep, and the clamp that stops a pinned member
+      # dragging the group. None of it needs two monitors.
+      - path: Crisp/Models/DisplayGroup.swift
+      # DDC presets and the plan that turns one into writes (DDCPresetTests).
+      # The property that matters — a preset cannot carry a destructive feature —
+      # is asserted here over the whole registry, not trusted at the call sites.
+      - path: Crisp/Models/DDCPreset.swift
+      # Schedules and the firing rule (PresetScheduleTests): a missed 22:00 fires
+      # once on wake, and not fourteen times. Pure and calendar-injected, which is
+      # what makes "it survives sleep" a test rather than an overnight experiment.
+      - path: Crisp/Models/PresetSchedule.swift
       # The I/O half of the store (DisplayStateStoreIOTests). Foundation +
       # AppKit's terminate notification only, so it stays headless.
       - path: Crisp/Services/DisplayStateStore.swift
@@ -161,6 +178,14 @@ targets:
       # crisp:// link and a Shortcuts action have to name. Derived by the same
       # functions the app uses so the two spellings cannot drift.
       - path: Crisp/Models/DisplayUUID.swift
+      # `crispctl preset list|apply` reads the app's own displays.json rather
+      # than keeping a second copy of the presets, so these are the document, its
+      # migration, and the preset model and plan the app applies presets with.
+      - path: Crisp/Models/DisplayStateDocument.swift
+      - path: Crisp/Models/JSONValue.swift
+      - path: Crisp/Models/DisplayGroup.swift
+      - path: Crisp/Models/DDCPreset.swift
+      - path: Crisp/Models/PresetSchedule.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.crisp.cli

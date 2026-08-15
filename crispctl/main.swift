@@ -6,15 +6,18 @@
 //   crispctl list                 enumerate external displays + their DDC values
 //   crispctl get <feature> [id]   read one feature (brightness|contrast|volume|input|power)
 //   crispctl set <feature> <v> [id] [--force]  write one feature (monitor units, usually 0-100)
+//   crispctl preset list          list the presets saved in the app's displays.json
+//   crispctl preset apply <id> [--force]       apply one
 //   crispctl capabilities [id]    read the monitor's capabilities string (VCP 0xF3)
 //   crispctl watch [id]           poll brightness every 2s until interrupted
 //
 // Display IDs are the 1-based indices from `crispctl list`; omit to target the
 // only external display (fails if there is more than one).
 //
-// `set` is the only command that changes anything, and the codes `DDCFeatureRegistry`
-// marks destructive (0x60, 0xD6, 0x04, 0x0C, 0x14, 0x8D, 0xCA) need `--force` or an
-// answered prompt — see `confirmDestructive`.
+// `set` and `preset apply` are the only commands that change anything, and the
+// codes `DDCFeatureRegistry` marks destructive (0x60, 0xD6, 0x04, 0x0C, 0x14,
+// 0x8D, 0xCA) need `--force` or an answered prompt — see `confirmDestructive`.
+// Both go through it, on the same terms.
 
 import Foundation
 import CoreGraphics
@@ -29,6 +32,7 @@ struct CrispCLI {
             case "list": try list()
             case "get": try get(args)
             case "set": try set(args)
+            case "preset", "presets": try preset(args)
             case "capabilities", "caps": try capabilities(args)
             case "watch": try watch(args)
             case "help", "-h", "--help": help()
@@ -225,6 +229,131 @@ struct CrispCLI {
         }
     }
 
+    // MARK: - Presets
+
+    /// `~/Library/Application Support/Crisp/displays.json`, read-only.
+    ///
+    /// The CLI reads the app's document rather than keeping its own: a preset the
+    /// user made in the panel has to be the preset `crispctl preset apply` runs,
+    /// and two files would drift the first time either one wrote. It never
+    /// *writes* the document — `lastFired`, group baselines and everything else
+    /// with an owner stay the app's, so running the CLI while Crisp is open
+    /// cannot lose a change it made a moment ago.
+    static var stateDocumentURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Crisp", isDirectory: true)
+            .appendingPathComponent("displays.json")
+    }
+
+    static func loadPresets() throws -> [DDCPreset] {
+        guard let data = try? Data(contentsOf: stateDocumentURL) else {
+            throw CLIError("no saved state at \(stateDocumentURL.path) — open Crisp and save a preset first")
+        }
+        let (document, failure) = DisplayStateDocument.decoding(data)
+        if let failure {
+            throw CLIError("\(stateDocumentURL.lastPathComponent) is unreadable: \(failure.localizedDescription)")
+        }
+        return DisplayStateMigration.upgraded(document).presets
+    }
+
+    static func preset(_ args: [String]) throws {
+        var args = args
+        let forced = args.contains("--force") || args.contains("-f")
+        args.removeAll { $0 == "--force" || $0 == "-f" }
+
+        switch args.count >= 2 ? args[1].lowercased() : "list" {
+        case "list": try presetList()
+        case "apply":
+            guard args.count >= 3 else { throw CLIError("usage: crispctl preset apply <id> [--force]") }
+            try presetApply(id: args[2], forced: forced)
+        default:
+            throw CLIError("unknown preset action '\(args[1])' (list|apply)")
+        }
+    }
+
+    static func presetList() throws {
+        let presets = try loadPresets()
+        guard !presets.isEmpty else {
+            print("no presets saved")
+            return
+        }
+        for preset in presets {
+            print("\(preset.id)  \(preset.name)")
+            for uuid in preset.settings.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
+                guard let settings = preset.settings[uuid] else { continue }
+                let values = DDCPresetPlan.features
+                    .compactMap { feature -> String? in
+                        guard let value = settings.value(for: feature) else { return nil }
+                        return "\(feature.rawValue) \(Int(value.rounded()))%"
+                    }
+                    .joined(separator: ", ")
+                print("    \(uuid.rawValue): \(values.isEmpty ? "(nothing)" : values)")
+            }
+        }
+    }
+
+    /// Applies one preset to whatever is attached.
+    ///
+    /// The app's `DDCFeatureDiscovery` gate is deliberately not reproduced here —
+    /// there is no quirks database, no probe history and no dialog out on the
+    /// command line, and a CLI whose purpose is measuring uncharted monitors must
+    /// not refuse unproven codes (same argument as `confirmDestructive`'s). What
+    /// *is* reproduced is the part that protects the user: every write goes
+    /// through `confirmDestructive`, so if a preset ever carried a destructive
+    /// code it would need `--force` or an answered prompt exactly as
+    /// `crispctl set` does. Presets cannot carry one today (`DDCPreset`), which
+    /// makes this a boundary that holds rather than a check that fires.
+    ///
+    /// A display the preset names that is not attached is skipped and reported,
+    /// never an error: a preset outlives the desk it was captured on.
+    static func presetApply(id: String, forced: Bool) throws {
+        let presets = try loadPresets()
+        guard let preset = presets.first(where: { $0.id == id || $0.name == id }) else {
+            throw CLIError("no preset with id or name '\(id)' — try `crispctl preset list`")
+        }
+
+        var byUUID: [String: ExtDisplay] = [:]
+        for display in externalDisplays() {
+            let uuid = DisplayUUID.systemString(for: display.displayID)
+                ?? DisplayUUID.fallbackString(vendor: display.vendor, model: display.product, serial: display.serial)
+            byUUID[uuid] = display
+        }
+
+        let attached = Set(byUUID.keys.map(DisplayUUID.init))
+        var applied = 0
+        for step in DDCPresetPlan.steps(for: preset, attached: attached) {
+            guard let display = byUUID[step.display.rawValue] else { continue }
+            let spec = step.feature.spec
+            // The monitor's own maximum, read first: DDC values are in the
+            // panel's units and MCCS's 0–100 is only a default. The app resolves
+            // this through the quirks database; out here the monitor's own reply
+            // is the best evidence available, and a monitor that will not answer
+            // is one this write should not guess at.
+            guard let probe = runAsync({ cb in
+                DDCService.shared.readAsync(displayID: display.displayID, command: spec.vcp, completion: cb)
+            }), let current = probe, current.max > 0 else {
+                print("skipped \(step.feature.rawValue) on [\(display.index)]: the monitor did not answer a read")
+                continue
+            }
+            let raw = UInt16((step.percent / 100.0 * Double(current.max)).rounded())
+            try confirmDestructive(code: spec.vcp, value: raw, forced: forced)
+            let ok = runAsync({ cb in
+                DDCService.shared.writeAsync(displayID: display.displayID, command: spec.vcp, value: raw, completion: cb)
+            })
+            if ok == true {
+                applied += 1
+                print("set \(step.feature.rawValue) = \(raw)/\(current.max) on display [\(display.index)]")
+            } else {
+                print("write failed for \(step.feature.rawValue) on display [\(display.index)]")
+            }
+        }
+
+        for missing in DDCPresetPlan.missingDisplays(for: preset, attached: attached) {
+            print("skipped \(missing.rawValue): not connected")
+        }
+        print("applied \(applied) setting(s) from preset '\(preset.name)'")
+    }
+
     /// Reads the monitor's capabilities string (DDC/CI command 0xF3).
     ///
     /// Read-only: 0xF3 asks the monitor to describe itself and changes nothing.
@@ -291,11 +420,16 @@ struct CrispCLI {
           crispctl list                 enumerate external displays + DDC values
           crispctl get <feature> [id]   read a feature
           crispctl set <feature> <v> [id] [--force]  write a feature (monitor units, usually 0-100)
+          crispctl preset list          presets saved by the app (displays.json)
+          crispctl preset apply <id|name> [--force]  apply one to whatever is attached
           crispctl capabilities [id]    read the capabilities string (VCP 0xF3, read-only)
           crispctl watch [id]           poll brightness until interrupted
 
         features: brightness | contrast | volume | input | power | red | green | blue
         ids are the 1-based indices from `crispctl list` (omit when only one display).
+
+        presets carry brightness, contrast and volume only, never an input source;
+        a display a preset names but that is not connected is skipped, not an error.
 
         --force  proceed with a write the registry marks destructive (0x60 input,
                  0xD6 power, 0x04 factory reset, 0x0C/0x14 colour, 0x8D blank,

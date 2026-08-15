@@ -457,6 +457,9 @@ struct SettingsView: View {
     @State private var showSupport = false
     @State private var showBrightnessKeys = false
     @State private var showHotkeys = false
+    @State private var showGroups = false
+    @State private var showPresets = false
+    @State private var showSchedules = false
     // Accessibility trust drives which Brightness Keys UI shows (toggle vs target menu).
     // AXIsProcessTrusted() isn't observable and the panel content mounts once, so re-read
     // it on every open (below) or the section shows a stale state after the user grants or
@@ -671,6 +674,15 @@ struct SettingsView: View {
                 BrightnessKeysPermissionNotice()
             }
 
+            // Groups, presets and schedules. Collapsed by default and one line
+            // each until opened: a feature nobody has set up should cost no
+            // attention in a panel this small. Presets first — it is the one
+            // that is useful on its own, and the other two build on it (a group
+            // needs two monitors, a schedule needs a preset).
+            PresetsSection(isExpanded: $showPresets)
+            DisplayGroupsSection(isExpanded: $showGroups)
+            SchedulesSection(isExpanded: $showSchedules)
+
             // User-assigned global shortcuts (Carbon RegisterEventHotKey). A
             // separate section from Brightness Keys above on purpose: that one is
             // about redirecting the hardware keys and needs Accessibility, this
@@ -753,6 +765,9 @@ struct SettingsView: View {
             showSupport = false
             showBrightnessKeys = false
             showHotkeys = false
+            showGroups = false
+            showPresets = false
+            showSchedules = false
         }
     }
 }

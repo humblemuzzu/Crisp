@@ -92,7 +92,12 @@ final class CrispURLTests: XCTestCase {
             "crisp://display/\(uuid)/input?value=17.5",                   // fractional code
             "crisp://displays/refresh?value=1",                           // refresh takes nothing
             "crisp://displays/reboot",                                    // unknown action
-            "crisp://displays"                                            // no action
+            "crisp://displays",                                           // no action
+            "crisp://preset",                                             // no preset named
+            "crisp://preset/",                                            // empty identifier
+            "crisp://preset/abc/extra",                                   // trailing path
+            "crisp://preset/abc?confirmed=true",                          // a preset takes no parameters
+            "crisp://preset/a%20b"                                        // whitespace in the identifier
         ]
         for string in malformed {
             guard case .ignored = command(string) else {
@@ -262,6 +267,37 @@ final class CrispURLTests: XCTestCase {
     func testRefreshIsItsOwnCommand() {
         guard case .refreshDisplays = command("crisp://displays/refresh") else {
             return XCTFail("crisp://displays/refresh should be the refresh command")
+        }
+    }
+
+    // MARK: - crisp://preset/<id>
+
+    /// A well-formed preset link parses to the identifier verbatim, with its
+    /// origin carried through. The preset itself is not resolved here — this
+    /// parser has no store — so what comes out is a name, not a permission.
+    /// Kills mutation: lowercasing the identifier (preset ids are UUID strings
+    /// and a link would then match nothing), or dropping the origin.
+    func testAWellFormedPresetURLProducesThatCommand() {
+        let id = "B67C0FAF-0000-4000-8000-0123456789AB"
+
+        guard case .applyPreset(let parsed, let origin) = command("crisp://preset/\(id)") else {
+            return XCTFail("crisp://preset/<id> should be the apply-preset command")
+        }
+        XCTAssertEqual(parsed, id)
+        XCTAssertEqual(origin, .url)
+    }
+
+    /// The preset path is bounded like the display path is. Nothing downstream
+    /// would match a 200KB identifier, but a parser whose premise is that the
+    /// string is hostile does not accept unbounded input on one route and not
+    /// the other.
+    /// Kills mutation: parsing the preset id without the shared `identifier`
+    /// check.
+    func testAnAbsurdlyLongPresetIdentifierIsRefused() {
+        let long = String(repeating: "A", count: CrispURL.maximumIdentifierLength + 1)
+
+        guard case .ignored = command("crisp://preset/\(long)") else {
+            return XCTFail("an over-long preset identifier should be ignored")
         }
     }
 }

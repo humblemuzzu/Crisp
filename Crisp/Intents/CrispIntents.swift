@@ -164,6 +164,42 @@ struct SwitchInputIntent: AppIntent {
     }
 }
 
+// MARK: - Presets
+
+/// Applies a stored DDC preset by name.
+///
+/// It takes a preset entity rather than a raw identifier so the shortcut shows
+/// the user's own names in the picker, and it adds no capability: the preset is
+/// expanded into one `AutomationRequest` per setting, each planned by the same
+/// rule this file's other intents go through. A preset carries brightness,
+/// contrast and volume and cannot carry an input source — `DDCPreset`'s header
+/// sets out why — so "run my Night preset on a timer" can never be the thing
+/// that blanks a screen while nobody is watching.
+struct ApplyPresetIntent: AppIntent {
+    static var title: LocalizedStringResource { "Apply Preset" }
+    static var description: IntentDescription {
+        // One literal, for the same reason `SwitchInputIntent`'s is: an
+        // `IntentDescription` takes a `LocalizedStringResource`, which is a
+        // literal type, and splitting it would change its catalog key.
+        // swiftlint:disable:next line_length - localized literal
+        IntentDescription("Applies a saved Crisp preset: brightness, contrast and volume for each display it names. Displays that are not connected are skipped.")
+    }
+
+    @Parameter(title: "Preset")
+    var preset: PresetEntity
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Apply preset \(\.$preset)")
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        let outcome = await AutomationService.shared.applyPreset(id: preset.id, origin: .appIntent)
+        guard outcome.didApply else { throw CrispIntentError.refused(outcome.message) }
+        return .result()
+    }
+}
+
 // MARK: - Reading
 
 struct GetDisplayInfoIntent: AppIntent {

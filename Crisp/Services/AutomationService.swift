@@ -102,6 +102,8 @@ final class AutomationService {
             outcome = refreshDisplays()
         case .write(let request):
             outcome = await perform(request)
+        case .applyPreset(let id, let origin):
+            outcome = await applyPreset(id: id, origin: origin)
         }
         // The scheme is a surface anything on the machine can reach, so every
         // arrival is logged whether or not it did anything. The URL itself is
@@ -140,6 +142,36 @@ final class AutomationService {
             }
             return applyDestructive(write, to: display, consent: consent)
         }
+    }
+
+    /// Applies a stored preset.
+    ///
+    /// It adds no permission of its own: `DDCPresetService` turns the preset into
+    /// one `AutomationRequest` per setting and sends each back through `perform`
+    /// above, so a preset can only ever do what a URL naming the same feature
+    /// directly could do. A preset cannot carry a destructive feature at all
+    /// (`DDCPreset`'s header says why), and if one ever did, its plan would come
+    /// back `needsConfirmation` like any other.
+    ///
+    /// A display the preset names but that is not attached is skipped rather than
+    /// failing the run — the same rule `AutomationRequest.plan` applies to a
+    /// single write, reported here as a count instead of an error.
+    @discardableResult
+    func applyPreset(id: String, origin: AutomationOrigin) async -> Outcome {
+        guard let preset = DDCPresetService.shared.presets.first(where: { $0.id == id }) else {
+            return .refused(reason: "no preset has the identifier \(id)")
+        }
+        let outcome = await DDCPresetService.shared.apply(preset, origin: origin)
+        guard outcome.didAnything else {
+            return .refused(
+                reason: outcome.refused.first
+                    ?? "\(preset.name) has nothing to apply to the displays attached right now"
+            )
+        }
+        let absent = outcome.missingDisplays.isEmpty
+            ? ""
+            : String(localized: " (\(outcome.missingDisplays.count) display(s) not connected)")
+        return .applied(String(localized: "applied preset \(preset.name)") + absent)
     }
 
     /// Re-enumerates displays and re-probes their DDC features.
@@ -312,6 +344,8 @@ final class AutomationService {
         case .url: return String(localized: "a crisp:// link")
         case .appIntent: return String(localized: "a shortcut")
         case .hotkey: return String(localized: "a keyboard shortcut")
+        case .panel: return String(localized: "a preset")
+        case .schedule: return String(localized: "a scheduled preset")
         }
     }
 }

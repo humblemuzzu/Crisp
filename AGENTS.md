@@ -24,6 +24,10 @@ tracks it and adds:
   (`list` / `get` / `set` / `watch`).
 - **Simplified sliders** — one control per feature (no +/− step buttons),
   instant response, `%` readout.
+- **Display groups, DDC presets and schedules** — brightness sync across
+  monitors (relative by default, because two panels' percentages are not
+  comparable), named snapshots of brightness/contrast/volume, and time-triggered
+  application that survives sleep. See `docs/groups-presets-schedules.md`.
 
 Everything added lives on the `benq-ddc` branch. See
 `docs/fork-ddc-features.md` for the feature-level documentation.
@@ -165,7 +169,14 @@ tested headlessly.
 | Volume write path | `Crisp/Services/VolumeService.swift` |
 | Keyboard keys (F1/F2) | `Crisp/Services/BrightnessKeyService.swift` + `Crisp/App/AppDelegate.swift` (trust poll) |
 | Persistence settings | `Crisp/Services/SettingsService.swift` |
+| **The persisted document, and its v1→v2 / v2→v3 migrations** | `Crisp/Models/DisplayStateDocument.swift` |
+| Forward compatibility: unknown-field bag, element-wise list decode | `Crisp/Models/JSONValue.swift` |
+| **Brightness-sync arithmetic** (the origin token, the clamp) | `Crisp/Models/DisplayGroup.swift` |
+| **What a preset may contain** (no input, by construction) | `Crisp/Models/DDCPreset.swift` |
+| **When a schedule is due** (the sleep/wake rule) | `Crisp/Models/PresetSchedule.swift` |
+| Groups / presets / schedules: CRUD, propagation, the tick | `Crisp/Services/DisplayGroupService.swift`, `DDCPresetService.swift`, `PresetScheduleService.swift` |
 | Sliders / input menu | `Crisp/Views/BrightnessSliderView.swift`, `Crisp/Views/VolumeSliderView.swift`, `Crisp/Views/DDCFeatureViews.swift`, `Crisp/Views/PanelBlocks.swift` |
+| Groups / presets / schedules UI | `Crisp/Views/GroupsPresetsView.swift` |
 | CLI | `crispctl/main.swift` (shares DDCService + DDCServiceMatcher) |
 | **What automation may ask for, and the destructive rule** | `Crisp/Models/AutomationRequest.swift` |
 | **The `crisp://` grammar** (an attack surface — read the header) | `Crisp/Models/CrispURL.swift` |
@@ -282,6 +293,34 @@ event tap armed` once granted, and `brightness key: adjusting external display
   which made a future automatic caller a silent bypass. Declaring a fourth
   conformer is the remaining escape hatch: in-module nothing can prevent it, but
   it is a visible type declaration in a diff, not a one-word argument.
+- **A preset cannot carry an input source, and that is a type, not a policy.**
+  `DDCPreset` has no field for one, so no future call site can populate it by
+  accident, and `DDCPresetTests` asserts over the whole registry that every
+  feature `DDCPresetPlan.features` names is non-destructive — adding one fails
+  the suite. The argument is in that file's header and in
+  `docs/groups-presets-schedules.md`; the short version is that none of the three
+  `DestructiveWriteConsent` conformers fits a preset (a schedule firing at 22:00
+  has nobody to answer a dialog), and that a preset's value is "one click, no
+  thinking" while an input switch is the one write where thinking is mandatory.
+  Declaring a fourth conformer to get around this is exactly the escape hatch the
+  note above describes.
+- **Group brightness sync cannot oscillate, by construction.**
+  `BrightnessSync.targets` plans nothing for a change whose origin is already
+  `.groupSync`, so a propagation is one level deep whatever the services above it
+  do with notifications; and every target is computed from the mover plus the
+  captured baselines, never from another member's current value, so a member the
+  clamp pinned at 0 or 100 cannot drag the group. Both are unit tests, not
+  something to watch for on a two-monitor desk.
+- **A schedule records the occurrence, never the wall clock.** That one choice is
+  what makes a 22:00 that passed during sleep apply exactly once on wake rather
+  than never (an exact-minute match) or on every tick until midnight (a
+  "past-it-and-not-fired-today" match). `armedAt`, a twelve-hour catch-up window
+  and a monotonic `lastFired` guard the three ways round it.
+- **`displays.json` keeps what it cannot read.** Since v3, every field this build
+  does not model — top level and per display — is parked verbatim and written
+  back out, so opening an older Crisp no longer deletes what a newer one stored;
+  and the three list-shaped members decode element-wise, so one malformed
+  schedule costs that schedule rather than quarantining the whole document.
 - **There is deliberately no HTTP server or local socket.** BetterDisplay binds
   `localhost:55777`; the argument for not doing so is written down in
   `docs/automation.md` rather than left as an omission.

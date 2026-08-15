@@ -1,9 +1,9 @@
 import Foundation
 
-/// The persisted shape of Crisp's per-display state, plus the pure v1 → v2
-/// migration. No file or `UserDefaults` access lives here — `DisplayStateStore`
-/// owns all I/O — so this half is exercised headlessly from `CrispTests`
-/// (same route as `GammaPersistenceKey` / `DDCServiceMatcher`).
+/// The persisted shape of Crisp's per-display state, plus the pure v1 → v2 and
+/// v2 → v3 migrations. No file or `UserDefaults` access lives here —
+/// `DisplayStateStore` owns all I/O — so this half is exercised headlessly from
+/// `CrispTests` (same route as `GammaPersistenceKey` / `DDCServiceMatcher`).
 ///
 /// Why a document instead of the flat `crisp.ddcState.<uuid>.<field>` defaults
 /// it replaces: flat keys cannot be migrated atomically (a crash between two
@@ -51,6 +51,22 @@ struct DisplayState: Codable, Equatable, Sendable {
     /// died with an unconfirmed input code on the panel — see
     /// `InputCalibrationRecovery`.
     var pendingInputCalibration: PendingInputCalibration?
+    /// Fields a *newer* build wrote for this display and this one does not model,
+    /// kept verbatim so a rollback does not delete them. Same mechanism and same
+    /// argument as the document's own bag — this is the level a new per-display
+    /// setting actually lands at, so it is the level that matters most.
+    var unknown: [String: JSONValue]
+
+    /// Spelled out for the same two reasons as the document's: the synthesis is
+    /// suppressed by writing both halves, and `knownFields` is derived from this
+    /// one list so a new field cannot be added to the struct and forgotten here.
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case brightness, contrast, volume, input, reapplyInputOnReconnect
+        case softwareBrightnessFactor, volumeCapable, brightnessKeySelected
+        case calibratedInputs, pendingInputCalibration
+    }
+
+    private static let knownFields = Set(CodingKeys.allCases.map(\.rawValue))
 
     init(
         brightness: Double? = nil,
@@ -62,7 +78,8 @@ struct DisplayState: Codable, Equatable, Sendable {
         volumeCapable: Bool? = nil,
         brightnessKeySelected: Bool? = nil,
         calibratedInputs: [CalibratedInput]? = nil,
-        pendingInputCalibration: PendingInputCalibration? = nil
+        pendingInputCalibration: PendingInputCalibration? = nil,
+        unknown: [String: JSONValue] = [:]
     ) {
         self.brightness = brightness
         self.contrast = contrast
@@ -74,11 +91,50 @@ struct DisplayState: Codable, Equatable, Sendable {
         self.brightnessKeySelected = brightnessKeySelected
         self.calibratedInputs = calibratedInputs
         self.pendingInputCalibration = pendingInputCalibration
+        self.unknown = unknown
+    }
+
+    /// Every known field stays strict (a wrong-typed `brightness` is still a
+    /// corrupt document, as `DisplayStateStoreTests` pins); everything else is
+    /// parked rather than dropped.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.brightness = try container.decodeIfPresent(Double.self, forKey: .brightness)
+        self.contrast = try container.decodeIfPresent(Double.self, forKey: .contrast)
+        self.volume = try container.decodeIfPresent(Double.self, forKey: .volume)
+        self.input = try container.decodeIfPresent(UInt16.self, forKey: .input)
+        self.reapplyInputOnReconnect = try container.decodeIfPresent(Bool.self, forKey: .reapplyInputOnReconnect)
+        self.softwareBrightnessFactor = try container.decodeIfPresent(Double.self, forKey: .softwareBrightnessFactor)
+        self.volumeCapable = try container.decodeIfPresent(Bool.self, forKey: .volumeCapable)
+        self.brightnessKeySelected = try container.decodeIfPresent(Bool.self, forKey: .brightnessKeySelected)
+        self.calibratedInputs = try container.decodeIfPresent([CalibratedInput].self, forKey: .calibratedInputs)
+        self.pendingInputCalibration = try container.decodeIfPresent(
+            PendingInputCalibration.self, forKey: .pendingInputCalibration
+        )
+        self.unknown = ForwardCompatibleFields.decode(from: decoder, known: Self.knownFields)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(brightness, forKey: .brightness)
+        try container.encodeIfPresent(contrast, forKey: .contrast)
+        try container.encodeIfPresent(volume, forKey: .volume)
+        try container.encodeIfPresent(input, forKey: .input)
+        try container.encodeIfPresent(reapplyInputOnReconnect, forKey: .reapplyInputOnReconnect)
+        try container.encodeIfPresent(softwareBrightnessFactor, forKey: .softwareBrightnessFactor)
+        try container.encodeIfPresent(volumeCapable, forKey: .volumeCapable)
+        try container.encodeIfPresent(brightnessKeySelected, forKey: .brightnessKeySelected)
+        try container.encodeIfPresent(calibratedInputs, forKey: .calibratedInputs)
+        try container.encodeIfPresent(pendingInputCalibration, forKey: .pendingInputCalibration)
+        try ForwardCompatibleFields.encode(unknown, to: encoder, known: Self.knownFields)
     }
 
     /// Nothing is remembered for this display, so the store can drop the entry
     /// rather than keep an empty object around forever (turning a toggle off
     /// should leave no trace, the same way clearing a `UserDefaults` key did).
+    ///
+    /// A display whose only content is a field from a newer build is **not**
+    /// empty: dropping it would be exactly the data loss the bag exists to stop.
     var isEmpty: Bool { self == DisplayState() }
 }
 
@@ -117,29 +173,105 @@ struct PendingInputCalibration: Codable, Equatable, Sendable {
     var startedAt: Date
 }
 
-/// The whole file: `{ "version": 2, "displays": { "<uuid>": { … } } }`.
+/// The whole file:
+/// ```
+/// { "version": 3,
+///   "displays":  { "<uuid>": { … } },
+///   "groups":    [ { "id": …, "name": "Desk", "members": […], "syncMode": "relative" } ],
+///   "presets":   [ { "id": …, "name": "Night", "settings": { "<uuid>": { … } } } ],
+///   "schedules": [ { "id": …, "presetID": …, "trigger": { "at": "22:00" } } ] }
+/// ```
+///
+/// The three list-shaped members arrived together in v3 and share one property
+/// that the scalar `displays` map does not need: they are **decoded
+/// element-wise** (`LossyList`). One malformed schedule must not cost the user
+/// their monitor's brightness, which is what failing the whole document would
+/// do — the store quarantines a document it cannot read.
 struct DisplayStateDocument: Codable, Equatable, Sendable {
-    /// v1 was the flat `UserDefaults` layout this replaces; v2 is this document.
-    static let currentVersion = 2
+    /// v1 was the flat `UserDefaults` layout this replaces; v2 was this document
+    /// with `displays` alone; v3 adds groups, presets and schedules.
+    static let currentVersion = 3
 
     var version: Int
     var displays: [DisplayUUID: DisplayState]
+    /// Named sets of displays whose brightness moves together (`DisplayGroup`).
+    var groups: [DisplayGroup]
+    /// Named DDC snapshots (`DDCPreset`).
+    var presets: [DDCPreset]
+    /// Time-triggered preset applications (`PresetSchedule`).
+    var schedules: [PresetSchedule]
+    /// Top-level fields a *newer* build wrote and this one does not model, kept
+    /// verbatim so a rollback is lossless. See `JSONValue`'s header.
+    var unknown: [String: JSONValue]
 
-    init(version: Int = DisplayStateDocument.currentVersion, displays: [DisplayUUID: DisplayState] = [:]) {
-        self.version = version
-        self.displays = displays
+    /// Spelled out rather than synthesised, because writing both `init(from:)`
+    /// and `encode(to:)` suppresses the synthesis — and because `CaseIterable` is
+    /// what lets `knownFields` below be derived from the same list instead of
+    /// being a second copy that can fall behind.
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case version, displays, groups, presets, schedules
     }
 
-    /// Tolerant decoding: both members default rather than throw, so a
+    private static let knownFields = Set(CodingKeys.allCases.map(\.rawValue))
+
+    init(
+        version: Int = DisplayStateDocument.currentVersion,
+        displays: [DisplayUUID: DisplayState] = [:],
+        groups: [DisplayGroup] = [],
+        presets: [DDCPreset] = [],
+        schedules: [PresetSchedule] = [],
+        unknown: [String: JSONValue] = [:]
+    ) {
+        self.version = version
+        self.displays = displays
+        self.groups = groups
+        self.presets = presets
+        self.schedules = schedules
+        self.unknown = unknown
+    }
+
+    /// Tolerant decoding: every member defaults rather than throws, so a
     /// hand-edited or half-written-by-an-older-build document still loads.
-    /// A document stamped with a *newer* version is read on the same terms —
-    /// fields this build does not know are dropped on the next save, which is
-    /// the accepted cost of rolling back (the v1 defaults are kept as a second
-    /// rollback path; see `DisplayStateMigration`).
+    ///
+    /// A document stamped with a *newer* version is read on the same terms, and
+    /// since v3 that is no longer lossy: the fields this build does not know are
+    /// parked in `unknown` and written back out unchanged, so opening an older
+    /// Crisp once no longer deletes whatever a newer one had stored. Its
+    /// `version` is preserved too (`DisplayStateMigration.upgraded` only ever
+    /// raises it), because a document carrying v4 fields must not claim to be v3.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.version = try container.decodeIfPresent(Int.self, forKey: .version) ?? Self.currentVersion
         self.displays = try container.decodeIfPresent([DisplayUUID: DisplayState].self, forKey: .displays) ?? [:]
+        self.groups = Self.list(DisplayGroup.self, from: container, forKey: .groups)
+        self.presets = Self.list(DDCPreset.self, from: container, forKey: .presets)
+        self.schedules = Self.list(PresetSchedule.self, from: container, forKey: .schedules)
+        self.unknown = ForwardCompatibleFields.decode(from: decoder, known: Self.knownFields)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(displays, forKey: .displays)
+        // Empty lists are omitted rather than written as `[]`: the file is meant
+        // to be read in a bug report, and three empty arrays on every install
+        // that has never made a group is noise.
+        if !groups.isEmpty { try container.encode(groups, forKey: .groups) }
+        if !presets.isEmpty { try container.encode(presets, forKey: .presets) }
+        if !schedules.isEmpty { try container.encode(schedules, forKey: .schedules) }
+        try ForwardCompatibleFields.encode(unknown, to: encoder, known: Self.knownFields)
+    }
+
+    /// One list member, element-wise. A member that is present but not a list at
+    /// all (a hand edit that put an object there) reads as empty rather than
+    /// failing the document.
+    private static func list<Element: Decodable>(
+        _ type: Element.Type,
+        from container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) -> [Element] {
+        let values = (try? container.decodeIfPresent([JSONValue].self, forKey: key)) ?? []
+        return LossyList.decode(type, from: values)
     }
 
     /// Decodes without ever throwing at the caller: unreadable or corrupt JSON
@@ -228,7 +360,10 @@ enum DisplayStateMigration {
         into document: DisplayStateDocument
     ) -> DisplayStateDocument {
         var result = document
-        result.version = DisplayStateDocument.currentVersion
+        // Raised, never lowered: a document a newer build stamped keeps its own
+        // version (see `upgraded`), and folding v1 keys into it must not rewrite
+        // that claim.
+        result.version = max(document.version, DisplayStateDocument.currentVersion)
 
         for (key, value) in legacy {
             if let (uuid, field) = ddcStateField(from: key) {
@@ -276,6 +411,45 @@ enum DisplayStateMigration {
     private static func fill<T>(_ target: inout T?, with value: T?) {
         guard target == nil, let value else { return }
         target = value
+    }
+
+    // MARK: - v2 → v3
+
+    /// Brings any decoded document up to v3. Pure, idempotent, total.
+    ///
+    /// v3 added three list-shaped members (`groups`, `presets`, `schedules`), and
+    /// unlike v1 → v2 there is nothing to *convert*: no earlier version stored
+    /// anything they could be derived from, so an upgraded v2 document has three
+    /// empty lists and every other field exactly as it was. What this function is
+    /// actually for is the two things a version bump has to guarantee anyway:
+    ///
+    ///   1. **Nothing is dropped.** Every v2 field and every field a newer build
+    ///      parked in `unknown` survives, and `version` is only ever *raised* —
+    ///      a v4 document read here keeps its 4, because a document carrying v4
+    ///      fields must not go back to disk claiming to be v3.
+    ///   2. **The invariants the new members rely on hold**, whatever a hand
+    ///      edit or a half-finished write left behind: identifiers are unique
+    ///      (two groups sharing an id makes every lookup ambiguous) and a group
+    ///      lists no display twice (which would double-write one monitor and
+    ///      make its offset undefined).
+    ///
+    /// Run on every load rather than behind a one-shot sentinel, because it is
+    /// idempotent and costs a pass over three short lists — and because a
+    /// sentinel is a second thing that can be wrong.
+    static func upgraded(_ document: DisplayStateDocument) -> DisplayStateDocument {
+        var result = document
+        result.version = max(document.version, DisplayStateDocument.currentVersion)
+        result.groups = deduplicated(document.groups.map { $0.normalized() })
+        result.presets = deduplicated(document.presets.map { $0.normalized() })
+        result.schedules = deduplicated(document.schedules)
+        return result
+    }
+
+    /// First entry wins, order preserved. Deterministic so the repair is stable
+    /// across runs: an arbitrary winner would rewrite the file on every launch.
+    private static func deduplicated<T: Identifiable>(_ items: [T]) -> [T] where T.ID == String {
+        var seen: Set<String> = []
+        return items.filter { seen.insert($0.id).inserted }
     }
 
     private static func ddcStateField(from key: String) -> (uuid: DisplayUUID, field: String)? {

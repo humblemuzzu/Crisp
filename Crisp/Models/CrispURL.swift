@@ -27,6 +27,7 @@ import Foundation
 //
 //     crisp://display/<display-uuid>/<feature>?value=<v>
 //     crisp://displays/refresh
+//     crisp://preset/<preset-id>
 //
 // `<display-uuid>` is the stable per-display identity everything else in the app
 // keys on (`DisplayUUID`), never a `CGDirectDisplayID` — macOS reassigns those
@@ -50,6 +51,11 @@ import Foundation
 enum CrispURLCommand: Equatable, Sendable {
     /// A change to one display, still subject to `AutomationRequest.plan`.
     case write(AutomationRequest)
+    /// Apply a stored preset by identifier. The preset is not resolved here —
+    /// this file has no store and no display list — and every setting it turns
+    /// out to contain goes through `AutomationRequest.plan` individually, so a
+    /// preset is not a way to reach a feature a URL could not name directly.
+    case applyPreset(id: String, origin: AutomationOrigin)
     /// Re-enumerate displays and re-probe their DDC features. Reads only.
     case refreshDisplays
     /// Nothing to do, and why. Every malformed URL lands here.
@@ -97,6 +103,8 @@ enum CrispURL {
             return displaysCommand(path: path, components: components)
         case "display":
             return displayCommand(path: path, components: components, origin: origin)
+        case "preset":
+            return presetCommand(path: path, components: components, origin: origin)
         case "":
             return .ignored(reason: "the URL names no target (expected \(scheme)://display/<uuid>/<feature>)")
         default:
@@ -121,6 +129,30 @@ enum CrispURL {
         default:
             return .ignored(reason: "unknown displays action '\(path[0])'")
         }
+    }
+
+    // MARK: - crisp://preset/<id>
+
+    /// Applying a preset takes no parameters, and rule 2 means a URL that
+    /// carries one is refused whole rather than having it ignored — otherwise
+    /// `crisp://preset/x?confirmed=true` would be a URL this parser accepts
+    /// while quietly discarding the interesting half.
+    private static func presetCommand(
+        path: [String], components: URLComponents, origin: AutomationOrigin
+    ) -> CrispURLCommand {
+        guard path.count == 1 else {
+            return .ignored(reason: "expected \(scheme)://preset/<preset-id>")
+        }
+        guard (components.queryItems ?? []).isEmpty else {
+            return .ignored(reason: "applying a preset takes no parameters")
+        }
+        // Held to the same shape as a display identifier: non-empty, no
+        // whitespace, bounded in bytes. A preset id is a UUID string the app
+        // minted, so anything else did not come from Crisp.
+        guard let id = identifier(path[0])?.rawValue else {
+            return .ignored(reason: "the preset identifier is empty or malformed")
+        }
+        return .applyPreset(id: id, origin: origin)
     }
 
     // MARK: - crisp://display/<uuid>/<feature>

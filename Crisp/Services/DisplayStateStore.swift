@@ -108,6 +108,43 @@ final class DisplayStateStore: @unchecked Sendable {
         lock.withLock { Set(document.displays.filter { predicate($0.value) }.keys) }
     }
 
+    // MARK: - The v3 collections
+    //
+    // Groups, presets and schedules are whole-list settings rather than
+    // per-display ones, so they get a read property and one mutating call each
+    // instead of `update(_:_:)`'s keyed form. Every mutation goes through
+    // `mutateLocked`, which re-runs `DisplayStateMigration.upgraded` — that is
+    // what keeps "identifiers are unique, a group lists no display twice" an
+    // invariant of the stored document rather than something each caller has to
+    // remember.
+
+    var groups: [DisplayGroup] { lock.withLock { document.groups } }
+    var presets: [DDCPreset] { lock.withLock { document.presets } }
+    var schedules: [PresetSchedule] { lock.withLock { document.schedules } }
+
+    func group(id: String) -> DisplayGroup? { groups.first { $0.id == id } }
+    func preset(id: String) -> DDCPreset? { presets.first { $0.id == id } }
+
+    func setGroups(_ groups: [DisplayGroup]) {
+        mutate { $0.groups = groups }
+    }
+
+    func setPresets(_ presets: [DDCPreset]) {
+        mutate { $0.presets = presets }
+    }
+
+    func setSchedules(_ schedules: [PresetSchedule]) {
+        mutate { $0.schedules = schedules }
+    }
+
+    private func mutate(_ body: (inout DisplayStateDocument) -> Void) {
+        lock.withLock {
+            body(&document)
+            document = DisplayStateMigration.upgraded(document)
+            scheduleSaveLocked()
+        }
+    }
+
     // MARK: - Writing
 
     /// Mutates one display's state and schedules a debounced save.
@@ -198,7 +235,12 @@ final class DisplayStateStore: @unchecked Sendable {
     private static func read(from url: URL) -> DisplayStateDocument {
         // No file yet is the normal fresh-install path, not an error.
         guard let data = try? Data(contentsOf: url) else { return DisplayStateDocument() }
-        let (document, failure) = DisplayStateDocument.decoding(data)
+        let (decoded, failure) = DisplayStateDocument.decoding(data)
+        // v2 → v3 on every load. Idempotent and pure, so it needs no sentinel
+        // (unlike the v1 fold below, which has to read `UserDefaults`), and
+        // running it unconditionally is what keeps the document's invariants
+        // true even for a file someone edited by hand.
+        let document = DisplayStateMigration.upgraded(decoded)
         if let failure {
             // Keep the bad bytes for diagnosis instead of silently overwriting
             // them with the empty document the next save would write.

@@ -56,7 +56,9 @@ CRISPCTL_SOURCES := crispctl/*.swift \
                     Crisp/Models/DDCPacket.swift Crisp/Models/DDCTransport.swift \
                     Crisp/Models/DDCProtocolEngine.swift Crisp/Models/DDCServiceMatcher.swift \
                     Crisp/Models/DDCCapabilities.swift Crisp/Models/DDCFeatureRegistry.swift \
-                    Crisp/Models/DisplayUUID.swift
+                    Crisp/Models/DisplayUUID.swift Crisp/Models/DisplayStateDocument.swift \
+                    Crisp/Models/JSONValue.swift Crisp/Models/DisplayGroup.swift \
+                    Crisp/Models/DDCPreset.swift Crisp/Models/PresetSchedule.swift
 CRISPCTL_FLAGS := -O -swift-version 5 -strict-concurrency=minimal -parse-as-library \
                   -import-objc-header Crisp/Crisp-Bridging-Header.h \
                   -framework IOKit -framework CoreGraphics

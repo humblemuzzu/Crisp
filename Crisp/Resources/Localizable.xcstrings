@@ -4,6 +4,9 @@
     "" : {
 
     },
+    " (%lld display(s) not connected)" : {
+
+    },
     ", collapsed" : {
       "localizations" : {
         "zh-Hans" : {
@@ -130,7 +133,22 @@
     "%lld" : {
       "shouldTranslate" : false
     },
+    "%lld active" : {
+
+    },
     "%lld assigned" : {
+
+    },
+    "%lld day(s) a week" : {
+
+    },
+    "%lld display(s)" : {
+
+    },
+    "%lld group(s)" : {
+
+    },
+    "%lld saved" : {
 
     },
     "%lld%%" : {
@@ -149,6 +167,12 @@
 
     },
     "a keyboard shortcut" : {
+
+    },
+    "a preset" : {
+
+    },
+    "a scheduled preset" : {
 
     },
     "a shortcut" : {
@@ -176,6 +200,9 @@
           }
         }
       }
+    },
+    "Add" : {
+
     },
     "Add ⌘, ⌥ or ⌃ to the shortcut. A shortcut without one would take that key from every app." : {
 
@@ -253,6 +280,24 @@
     "Another app already uses this shortcut, so macOS would not give it to Crisp." : {
 
     },
+    "applied preset %@" : {
+
+    },
+    "Applies a saved Crisp preset: brightness, contrast and volume for each display it names. Displays that are not connected are skipped." : {
+
+    },
+    "Applies this preset" : {
+
+    },
+    "Apply" : {
+
+    },
+    "Apply Preset" : {
+
+    },
+    "Apply preset ${preset}" : {
+
+    },
     "Are you sure you want to delete this virtual display configuration?" : {
       "localizations" : {
         "zh-Hans" : {
@@ -284,6 +329,9 @@
           }
         }
       }
+    },
+    "At" : {
+
     },
     "At the bottom of the panel: brightness keys, reconnect behaviour, launch at login." : {
 
@@ -416,6 +464,9 @@
     "Brightness path" : {
 
     },
+    "Brightness sync" : {
+
+    },
     "Brightness up" : {
 
     },
@@ -487,6 +538,9 @@
           }
         }
       }
+    },
+    "Choose preset" : {
+
     },
     "Click anywhere on the screen to pick a color…" : {
       "localizations" : {
@@ -824,6 +878,9 @@
         }
       }
     },
+    "Delete schedule" : {
+
+    },
     "Diagnostics" : {
 
     },
@@ -919,7 +976,13 @@
         }
       }
     },
+    "Displays" : {
+
+    },
     "Done" : {
+
+    },
+    "Each display keeps the difference it had when you set the group up." : {
 
     },
     "Edit…" : {
@@ -942,6 +1005,12 @@
           }
         }
       }
+    },
+    "every day" : {
+
+    },
+    "Every display goes to the same percentage, which can look wrong on mixed monitors." : {
+
     },
     "Every one of these depends on what your monitor answers. Crisp shows a control only for the ones it confirmed, and the next screen lists what it found." : {
 
@@ -1167,6 +1236,12 @@
         }
       }
     },
+    "Group actions" : {
+
+    },
+    "Group name" : {
+
+    },
     "HDR" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1309,6 +1384,9 @@
         }
       }
     },
+    "Keep offsets" : {
+
+    },
     "Keyboard Shortcuts" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1397,6 +1475,9 @@
         }
       }
     },
+    "Missing preset" : {
+
+    },
     "Monitor report copied — paste it into a new issue or pull request." : {
 
     },
@@ -1444,6 +1525,12 @@
           }
         }
       }
+    },
+    "New Group" : {
+
+    },
+    "New Group…" : {
+
     },
     "New Preset" : {
       "localizations" : {
@@ -1526,7 +1613,13 @@
         }
       }
     },
+    "None" : {
+
+    },
     "None assigned" : {
+
+    },
+    "None saved" : {
 
     },
     "not mapped yet" : {
@@ -1688,7 +1781,6 @@
 
     },
     "Preset" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1697,6 +1789,9 @@
           }
         }
       }
+    },
+    "Preset actions" : {
+
     },
     "Preset name" : {
       "localizations" : {
@@ -1717,6 +1812,9 @@
           }
         }
       }
+    },
+    "Preset to schedule" : {
+
     },
     "Presets" : {
       "extractionState" : "stale",
@@ -1791,6 +1889,9 @@
 
     },
     "Reapply input on reconnect" : {
+
+    },
+    "Recapture Offsets" : {
 
     },
     "Recommended" : {
@@ -1869,6 +1970,9 @@
     "Remove the shortcut for %@" : {
 
     },
+    "Rename…" : {
+
+    },
     "Replace the stored values above with this display's current settings" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1915,6 +2019,9 @@
     "Returns what Crisp last read from a display: brightness, contrast, volume and input source." : {
 
     },
+    "Same level" : {
+
+    },
     "Save" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1924,6 +2031,15 @@
           }
         }
       }
+    },
+    "Save a preset first — a schedule applies one at a time of day." : {
+
+    },
+    "Save Current as Preset…" : {
+
+    },
+    "Save Current Here" : {
+
     },
     "Saving…" : {
       "localizations" : {

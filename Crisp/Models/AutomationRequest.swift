@@ -51,6 +51,17 @@ enum AutomationOrigin: String, Equatable, Sendable, CaseIterable {
     /// drives a registry feature today — so that adding one cannot quietly become
     /// the one origin the destructive rule was never written for.
     case hotkey
+    /// A button in Crisp's own panel: applying a preset. The user is looking at
+    /// the app, which is the *most* trustworthy origin there is — and it gets
+    /// exactly the same plan as the others, because the moment one origin is
+    /// special the rule below stops being a rule.
+    case panel
+    /// A schedule firing. The sharpest case after a URL, and the reason it is
+    /// named rather than folded into `.panel`: a schedule runs at a time the user
+    /// chose weeks ago, on a Mac they may not be sitting at. A confirmation
+    /// dialog is not a thing a schedule can satisfy, which is precisely why
+    /// nothing destructive may be reachable from one.
+    case schedule
 }
 
 // MARK: - Value

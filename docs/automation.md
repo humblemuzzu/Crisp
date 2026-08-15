@@ -38,6 +38,7 @@ matches what the app looks up.
 | Set Contrast | display, 0–100 | VCP 0x12, monitors that answer a contrast read |
 | Set Volume | display, 0–100 | VCP 0x62 |
 | Switch Input Source | display, raw code | **always asks first** (see below) |
+| Apply Preset | preset | brightness/contrast/volume; skips displays that are absent |
 | Get Display Info | display | returns the display with its last-read values |
 | Refresh Displays | — | re-enumerate and re-probe; reads only |
 
@@ -63,6 +64,7 @@ codes.
 ```
 crisp://display/<display-uuid>/<feature>?value=<v>
 crisp://displays/refresh
+crisp://preset/<preset-id>
 ```
 
 `<feature>` is the registry's own name for the VCP code — `brightness`,
@@ -73,6 +75,7 @@ code, decimal or `0x`-prefixed.
 ```sh
 open 'crisp://display/AEB55F97-FD93-4F8D-AD10-0942959D069C/brightness?value=50'
 open 'crisp://displays/refresh'
+open "crisp://preset/$(./crispctl-bin preset list | head -1 | cut -d' ' -f1)"
 ```
 
 ### The security model
@@ -113,6 +116,25 @@ following a link. The rules follow from that.
 `CrispURLTests` and `AutomationRequestTests` pin all of it, including the
 exhaustive property: *no automation origin can apply any destructive VCP code in
 the registry, with any value shape.*
+
+### Presets add no capability
+
+`crisp://preset/<id>` and the *Apply Preset* intent do not reach past any of
+that. A preset is expanded into one `AutomationRequest` per setting and each is
+planned exactly as if a URL had named that feature directly — so a preset can
+only do what a link could already do, one write at a time.
+
+A preset also **cannot carry an input source**, and not by policy: `DDCPreset`
+has no field for one. The argument is in that file's header, and
+`DDCPresetTests` asserts over the whole registry that every feature a preset may
+carry is non-destructive, so adding one fails the suite. That matters most for
+schedules, which fire at a time the user chose weeks ago on a Mac they may not be
+sitting at — a confirmation dialog is not something a schedule can satisfy, so
+nothing reachable from one may need it.
+
+`AutomationOrigin` names `panel` and `schedule` alongside `url`, `appIntent` and
+`hotkey` for that reason: the exhaustive test iterates `allCases`, so a new
+surface is covered by the destructive rule the day it is declared.
 
 ---
 
@@ -189,8 +211,9 @@ App Intents genuinely cannot serve — and it would have to route through
 | Shortcut combinations, conflicts, persistence shape | `Crisp/Models/HotkeyBinding.swift` |
 | Executing a request; the one confirmation dialog | `Crisp/Services/AutomationService.swift` |
 | Carbon hot-key registration and dispatch | `Crisp/Services/HotkeyService.swift` |
-| Shortcuts entity + query | `Crisp/Intents/DisplayEntity.swift` |
-| The six intents | `Crisp/Intents/CrispIntents.swift` |
+| What a preset may contain; the apply plan | `Crisp/Models/DDCPreset.swift` |
+| Shortcuts entities + queries | `Crisp/Intents/DisplayEntity.swift`, `Crisp/Intents/PresetEntity.swift` |
+| The seven intents | `Crisp/Intents/CrispIntents.swift` |
 | The recorder UI | `Crisp/Views/HotkeyRecorderView.swift` |
 | URL delivery, hotkey start-up | `Crisp/App/AppDelegate.swift` |
 | Scheme registration | `scripts/make-app.sh`, `scripts/release.sh`, `scripts/build-dmg.sh` |
