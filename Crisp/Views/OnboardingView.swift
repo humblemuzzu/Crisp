@@ -136,6 +136,11 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
             defer: false
         )
         window.title = String(localized: "Welcome to Crisp")
+        // The window's only stable handle. Crisp is LSUIElement, so there is no
+        // menu bar and no Dock icon to reach this window through, and the title
+        // is localized — an identifier is what lets a UI test or a support
+        // script name it and mean the same thing in every language.
+        window.setAccessibilityIdentifier("crisp.window.onboarding")
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: OnboardingView(model: model) { [weak self] in
             self?.finish()
@@ -208,26 +213,33 @@ struct OnboardingView: View {
             if !model.flow.isLast {
                 Button("Skip") { onFinish() }
                     .buttonStyle(.borderless)
+                    .accessibilityIdentifier("crisp.onboarding.skip")
             }
 
             Spacer()
 
+            // Read aloud, not hidden. Sighted users get "where am I" from the
+            // content changing under them; someone listening to the window has
+            // only this line, and a four-screen guide with no sense of length is
+            // a guide you cannot decide to finish.
             Text("Step \(model.flow.position) of \(model.flow.count)")
                 .font(.caption)
                 .foregroundColor(.secondary)
-                .accessibilityHidden(true)
 
             if !model.flow.isFirst {
                 Button("Back") { model.back() }
+                    .accessibilityIdentifier("crisp.onboarding.back")
             }
             if model.flow.isLast {
                 Button("Done") { onFinish() }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("crisp.onboarding.done")
             } else {
                 Button("Next") { model.advance() }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("crisp.onboarding.next")
             }
         }
         .padding(.horizontal, 20)
@@ -295,6 +307,7 @@ private struct AccessibilityStep: View {
             if keyService.interceptionState != .armed && !didRequest {
                 Button("Grant Accessibility Access") { requestAccess() }
                     .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("crisp.onboarding.grant-accessibility")
             }
 
             // The live truth, from the service that owns it: green once macOS
@@ -399,6 +412,12 @@ private struct DetectedRow: View {
             }
             Spacer(minLength: 0)
         }
+        // One monitor is one thing to hear about, not two: combining reads
+        // "<name>, <verdict>" in a single stop instead of stranding the verdict
+        // in a separate element a row below the monitor it belongs to. Safe here
+        // because nothing in this row is operable — collapsing an interactive
+        // control this way would strip its role (see scripts/check-accessibility.sh).
+        .accessibilityElement(children: .combine)
     }
 
     private var icon: String {
@@ -481,6 +500,9 @@ private struct StepHeader: View {
             Text(title)
                 .font(.title2.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
+                // The screen's own heading, so it is one: navigating by heading
+                // is how a VoiceOver user skims a multi-screen guide.
+                .accessibilityAddTraits(.isHeader)
             Text(subtitle)
                 .font(.callout)
                 .foregroundColor(.secondary)
@@ -509,6 +531,8 @@ private struct BulletRow: View {
             }
             Spacer(minLength: 0)
         }
+        // As in DetectedRow: the heading and its sentence are one bullet.
+        .accessibilityElement(children: .combine)
     }
 }
 

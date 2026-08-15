@@ -50,6 +50,10 @@ final class InputCalibrationWindowController: NSObject, NSWindowDelegate {
             defer: false
         )
         window.title = String(localized: "Calibrate Input Sources")
+        // See OnboardingWindowController. It matters more here than anywhere
+        // else: this is the window someone has to find again when the screen it
+        // was on has just gone black.
+        window.setAccessibilityIdentifier("crisp.window.input-calibration")
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(
             rootView: InputCalibrationView(display: display, service: InputCalibrationService.shared)
@@ -162,6 +166,10 @@ struct InputCalibrationView: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
         }
+        // Which monitor this window is about is not a detail: it is the whole
+        // safety context for everything below.
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -202,21 +210,31 @@ struct InputCalibrationView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+            // The code and what is known about it are one candidate.
+            .accessibilityElement(children: .combine)
             Spacer()
             if confirmed != nil {
                 Image(systemName: "checkmark.seal.fill")
                     .foregroundColor(.green)
                     .accessibilityLabel("Confirmed")
             }
+            // Every candidate row carries a button titled "Test", so the title
+            // alone identifies none of them. The code is what the user is
+            // choosing between, so the code goes in the name.
             Button("Test") { service.test(code) }
                 .disabled(service.session?.phase != .choosing)
+                .accessibilityLabel(Text(verbatim: "\(String(localized: "Test")) \(code)"))
+                .accessibilityIdentifier("crisp.calibration.test.\(code)")
         }
         .padding(.vertical, 4)
     }
 
     private func switchingStep(code: UInt16) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            // The line below says exactly this; an unnamed spinner would only
+            // add "progress indicator" in front of it.
             ProgressView()
+                .accessibilityHidden(true)
             Text("Switching to input \(String(code))…")
                 .font(.callout)
         }
@@ -229,16 +247,23 @@ struct InputCalibrationView: View {
             Text("The monitor is now on input \(String(code)). If this window is on screen, click Keep. Doing nothing switches the monitor back in \(String(service.secondsRemaining)) seconds.")
                 .font(.callout)
 
+            // A picture of the countdown the sentence above already gives in
+            // seconds. Hidden rather than labelled: a bar that re-announces
+            // itself every second is not information, it is a siren, and this is
+            // the screen where the user most needs to hear the instruction.
             ProgressView(
                 value: Double(service.secondsRemaining),
                 total: service.session?.confirmWindow ?? 15
             )
             .progressViewStyle(.linear)
+            .accessibilityHidden(true)
 
             HStack(spacing: 10) {
                 Button("Keep") { service.keep() }
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("crisp.calibration.keep")
                 Button("Switch Back Now") { service.revertNow() }
+                    .accessibilityIdentifier("crisp.calibration.revert")
             }
         }
     }
@@ -246,6 +271,7 @@ struct InputCalibrationView: View {
     private func revertingStep(reason: InputCalibrationRevertReason) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             ProgressView()
+                .accessibilityHidden(true)
             Text(revertMessage(reason))
                 .font(.callout)
             Text("Switching back to input \(String(service.session?.originalCode ?? 0))…")
@@ -272,18 +298,24 @@ struct InputCalibrationView: View {
             Text("Use the name printed on the monitor, e.g. USB-C or HDMI 2. This is the only thing Crisp treats as confirmed: you saw the picture on this code.")
                 .font(.callout)
                 .foregroundColor(.secondary)
+            // The placeholder is the only visible label, and a placeholder is
+            // not a name: it disappears the moment there is text in the field.
             TextField("Port name", text: $portName)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Port name")
+                .accessibilityIdentifier("crisp.calibration.port-name")
             HStack {
                 Button("Save") {
                     service.name(portName)
                     portName = ""
                 }
                 .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("crisp.calibration.save")
                 Button("Skip") {
                     service.name("")
                     portName = ""
                 }
+                .accessibilityIdentifier("crisp.calibration.skip-naming")
             }
         }
     }
@@ -310,7 +342,9 @@ struct InputCalibrationView: View {
             Spacer()
             Button("Copy Quirks Entry") { copyReport() }
                 .disabled(service.calibratedInputs(for: display.stateUUID).isEmpty)
+                .accessibilityIdentifier("crisp.calibration.copy-quirks")
             Button("Done") { InputCalibrationWindowController.shared.close() }
+                .accessibilityIdentifier("crisp.calibration.done")
         }
         .padding(16)
     }

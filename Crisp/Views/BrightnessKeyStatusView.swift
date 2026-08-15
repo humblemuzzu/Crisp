@@ -30,6 +30,10 @@ struct BrightnessKeyStatusView: View {
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // The dot is hidden, so the sentence is the whole status. Naming it
+            // as one keeps the state from being read as a stray fragment.
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("crisp.brightness-keys.status")
 
             switch keyService.interceptionState {
             case .armed, .disabled:
@@ -39,6 +43,7 @@ struct BrightnessKeyStatusView: View {
                 Button("Open Accessibility Settings") { openAccessibilityPane() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .accessibilityIdentifier("crisp.brightness-keys.open-settings")
 
             case .grantedButRefused:
                 // swiftlint:disable:next line_length - localized literal, splitting would change its catalog key
@@ -49,6 +54,7 @@ struct BrightnessKeyStatusView: View {
                 Button("Reset permission") { resetAccessibilityPermission() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
+                    .accessibilityIdentifier("crisp.brightness-keys.reset-permission")
             }
 
             // Both follow-ups describe work still to be done, so they clear themselves the moment
@@ -72,9 +78,15 @@ struct BrightnessKeyStatusView: View {
                             .font(.caption.monospaced())
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
+                        // "Copy" on its own says nothing about what would land
+                        // on the clipboard; the command it copies is the point,
+                        // and it is the thing the user is about to paste blind
+                        // into a Terminal.
                         Button("Copy") { copyToPasteboard(manualCommand) }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
+                            .accessibilityLabel(Text(verbatim: "\(String(localized: "Copy")) — \(manualCommand)"))
+                            .accessibilityIdentifier("crisp.brightness-keys.copy-command")
                     }
                 }
             }

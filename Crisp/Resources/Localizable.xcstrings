@@ -353,6 +353,9 @@
         }
       }
     },
+    "Brightness path" : {
+
+    },
     "Bug report copied to the clipboard." : {
 
     },
@@ -1749,6 +1752,9 @@
           }
         }
       }
+    },
+    "Refreshing…" : {
+
     },
     "Refusing to disconnect: it would leave no active display." : {
       "localizations" : {

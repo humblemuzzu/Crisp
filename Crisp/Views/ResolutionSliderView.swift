@@ -55,6 +55,10 @@ struct ResolutionSliderView: View {
                     }
                 }
                 .disabled(modes.isEmpty || isSwitching)
+                // The resolution text sits in a separate label to the right, so
+                // the slider itself carries no name at all without this.
+                .accessibilityLabel("Resolution")
+                .accessibilityValue(Text(verbatim: previewModeFullString))
                 .onReceive(display.$currentDisplayMode) { _ in
                     guard !isDragging else { return }
                     syncSliderToCurrentMode()

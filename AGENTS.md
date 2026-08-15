@@ -166,6 +166,7 @@ tested headlessly.
 | CLI | `crispctl/main.swift` (shares DDCService + DDCServiceMatcher) |
 | Packaging | `scripts/make-app.sh` |
 | Architecture gates (§3.1, §3.6) | `scripts/check-boundaries.sh` |
+| Accessibility gate (named controls, window identifiers) | `scripts/check-accessibility.sh`, findings in `reference/accessibility.md` |
 | Test runner (preflight + suite) | `scripts/run-tests.sh`, target list in `project.yml` |
 
 ---
@@ -177,6 +178,7 @@ make compile          # app binary only (./Crisp-bin), zero-warning check
                       #   STRICT=1 adds -warnings-as-errors (what CI builds with)
 make crispctl         # CLI binary (./crispctl-bin), same STRICT=1 knob
 make boundaries       # §3's architecture gates; no Xcode, no display, ~1s
+make accessibility    # every interactive control is named in source; no Xcode, ~1s
 ./scripts/make-app.sh # full rebuild -> /Applications/Crisp.app, stable-sign, relaunch
 make test             # xcodegen + xcodebuild unit tests (needs Xcode + xcodegen)
 make check            # everything CI enforces: lint + boundaries + tests + i18n keys
@@ -249,3 +251,7 @@ event tap armed` once granted, and `brightness key: adjusting external display
 - `windowserver-crash.md` — the WindowServer segfault, read out of its crash
   report: an Apple use-after-free in CoreAnimation's external-display object,
   not something this app can cause
+- `accessibility.md` — what SwiftUI actually publishes to the AX API on
+  macOS 26 (buttons expose `AXAttributedDescription` only, and
+  `.accessibilityElement(children:)` on a control demotes it to `AXUnknown`),
+  and why the CI gate is static

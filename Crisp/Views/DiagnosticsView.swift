@@ -130,6 +130,9 @@ final class DiagnosticsWindowController: NSObject, NSWindowDelegate {
             defer: false
         )
         window.title = String(localized: "Crisp Diagnostics")
+        // See OnboardingWindowController: an LSUIElement app's window has no
+        // other language-independent handle.
+        window.setAccessibilityIdentifier("crisp.window.diagnostics")
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 560, height: 400)
         window.contentView = NSHostingView(rootView: DiagnosticsView(model: model))
@@ -193,28 +196,49 @@ struct DiagnosticsView: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Toggle(isOn: $model.includePerUnitIdentifiers) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Include per-unit display identifiers")
-                    // The one place the app asks for something identifying, so it
-                    // says what it is for instead of leaving the user to guess.
-                    // swiftlint:disable:next line_length - localized literal, splitting would change its catalog key
-                    Text("Adds this monitor's EDID serial number and display UUID. They identify one physical unit, so leave this off unless a maintainer asks: they are only needed for two identical monitors whose controls get swapped, or for settings that do not survive a reconnect. Crisp never collects your Mac's serial number, user name or host name.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.checkbox)
+            // The explanation is a sibling of the checkbox, not part of its
+            // label. Nesting it inside the Toggle made the control's accessible
+            // name the whole 60-word privacy paragraph — which is what a screen
+            // reader then announces, in full, every time focus lands on it. Out
+            // here it is one paragraph of text you can skip past, and the
+            // checkbox is called what it is called.
+            Toggle("Include per-unit display identifiers", isOn: $model.includePerUnitIdentifiers)
+                .toggleStyle(.checkbox)
+                .accessibilityIdentifier("crisp.diagnostics.include-identifiers")
+            // The one place the app asks for something identifying, so it says
+            // what it is for instead of leaving the user to guess.
+            // swiftlint:disable:next line_length - localized literal, splitting would change its catalog key
+            Text("Adds this monitor's EDID serial number and display UUID. They identify one physical unit, so leave this off unless a maintainer asks: they are only needed for two identical monitors whose controls get swapped, or for settings that do not survive a reconnect. Crisp never collects your Mac's serial number, user name or host name.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                // Aligns under the checkbox's own label, where it used to sit.
+                .padding(.leading, 20)
 
             HStack(spacing: 8) {
                 Button("Copy Bug Report") { model.copyBugReport() }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.entries.isEmpty)
-                Button("Refresh") { Task { await model.refresh() } }
-                    .disabled(model.isRefreshing)
+                    .accessibilityIdentifier("crisp.diagnostics.copy-bug-report")
+                // The button's own title carries the state, so the spinner beside it really
+                // is decoration. Hiding the spinner WITHOUT this would have left a VoiceOver
+                // user with only "Refresh, dimmed", which is indistinguishable from a button
+                // disabled for any other reason — the sighted cue would have had no
+                // equivalent. Elsewhere in the app a hidden ProgressView sits next to text
+                // that already spells the state out; here nothing did.
+                Button(model.isRefreshing ? "Refreshing…" : "Refresh") {
+                    Task { await model.refresh() }
+                }
+                .disabled(model.isRefreshing)
+                // Stated explicitly rather than left to the title above: a title built from a
+                // conditional is invisible to the static gate, which can only see literals.
+                // Spelling it out satisfies the gate honestly instead of exempting the file.
+                .accessibilityLabel(model.isRefreshing ? Text("Refreshing…") : Text("Refresh"))
+                .accessibilityIdentifier("crisp.diagnostics.refresh")
                 if model.isRefreshing {
-                    ProgressView().controlSize(.small)
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityHidden(true)
                 }
                 Spacer()
                 if let notice = model.notice {
@@ -243,6 +267,11 @@ private struct DiagnosticsCard<Content: View>: View {
                     Text(verbatim: subtitle).font(.caption).foregroundColor(.secondary)
                 }
             }
+            // The card's title is the only way to tell which monitor the forty
+            // rows below belong to, so make it navigable as a heading rather
+            // than one more line of text in a long wall.
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
             content
         }
         .padding(12)
@@ -270,6 +299,10 @@ private struct DiagnosticRow: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // "EDID serial" and "0x1A2B" are one fact. Left as two elements they are
+        // read as two, and in a table of forty rows the label and the value that
+        // belongs to it drift apart in the listener's head almost immediately.
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -348,6 +381,11 @@ private struct DisplayDiagnosticsCard: View {
                 Spacer()
                 Button("Copy Monitor Report", action: onReportMonitor)
                     .controlSize(.small)
+                    // One of these per attached monitor, all with the same title.
+                    // Naming the monitor is the difference between a list of
+                    // identical buttons and a choice.
+                    .accessibilityLabel(Text(verbatim: "\(String(localized: "Copy Monitor Report")) — "
+                        + diagnostics.identity.name))
             }
         }
     }
@@ -384,6 +422,8 @@ private struct FeatureRow: View {
                     .padding(.leading, 14)
             }
         }
+        // Feature name, VCP code, support verdict and raw probe are one finding.
+        .accessibilityElement(children: .combine)
     }
 
     private var indicatorColor: Color {

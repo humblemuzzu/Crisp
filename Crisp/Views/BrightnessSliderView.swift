@@ -61,7 +61,16 @@ struct BrightnessSliderView: View {
                 // knob that writes nowhere is worse than an honest dead one.
                 .disabled(!display.brightnessRung.isControllable)
                 .accessibilityLabel("Display brightness")
+                // "%" is deliberate, not an oversight: VoiceOver expands it to
+                // the listener's own word for percent, and this key is already
+                // translated. Spelling out an English "percent" here would read
+                // correctly in one language and wrongly in every other.
                 .accessibilityValue("\(Int(localBrightness))%")
+                // A dead control has to say why it is dead. The reason is on
+                // screen below for sighted users; without this it is the one
+                // thing a listener cannot get. Empty for a working slider, which
+                // needs no explanation.
+                .accessibilityHint(Text(verbatim: unavailableReason ?? ""))
                 .onChange(of: localBrightness) { _, newValue in
                     guard isDragging else { return }
                     // Live write during drag or click; the coalescing writer keeps the
@@ -168,8 +177,27 @@ struct BrightnessRungBadge: View {
                 .fixedSize()
         }
         .help(tooltip)
+        // The badge is a word and a dot; what it *means* is in `.help`, and a
+        // tooltip needs a pointer hovering over it, which is exactly what a
+        // VoiceOver user does not have. So the reason is spoken, and it is
+        // introduced by what the badge is for — "DDC" alone is a noise, while
+        // "Brightness path: DDC. The monitor's own backlight, over DDC/CI." is
+        // the same sentence a sighted user gets from hovering.
+        //
+        // `children: .ignore` is correct here and only here: the dot and the
+        // word are decoration for one fact. The same modifier on an interactive
+        // control would strip its role (measured: a Button becomes AXUnknown),
+        // which is why scripts/check-accessibility.sh refuses it on controls.
+        //
+        // The trait is not decoration either. `children: .ignore` on its own
+        // leaves the badge as AXUnknown even here — no role, and the label
+        // reachable only through AXAttributedDescription. Declaring it static
+        // text makes it AXStaticText and puts the sentence in AXValue, where
+        // plain AppleScript automation can read it too.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: "\(label). \(tooltip)"))
+        .accessibilityAddTraits(.isStaticText)
+        .accessibilityLabel(Text(verbatim: "\(String(localized: "Brightness path")): \(label). \(tooltip)"))
+        .accessibilityIdentifier("crisp.brightness.rung-badge")
     }
 
     /// Hardware keeps the wording the two paths have always used ("System" for

@@ -36,6 +36,14 @@ jobs:
       # no toolchain, so it runs first and fails in seconds.
       - name: Architecture boundaries (AGENTS.md §3)
         run: make boundaries
+      # Every interactive control in the policed views is named in source, and
+      # every titled window carries an accessibility identifier. Static by
+      # necessity: this runner has no GUI session and cannot launch a menu-bar
+      # app, so a live AX query is not available here — see the script's header
+      # for exactly what that does and does not prove. Same cost as the gate
+      # above: pure text analysis, seconds.
+      - name: Accessibility (named controls)
+        run: make accessibility
       # Lint, enforcing: the baseline is clean, so any violation (warning or
       # error) fails via --strict. Run locally with `swiftlint lint --strict`;
       # without full Xcode, SWIFTLINT_DISABLE_SOURCEKIT=1 skips the

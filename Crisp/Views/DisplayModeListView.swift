@@ -533,6 +533,11 @@ struct ResolutionSliderBlock: View {
                 )
                 .controlSize(.small)
                 .tint(Color.accentColor)
+                // The three captions under the track ("Larger Text", the current
+                // stop, "More Space") are separate elements, so the slider is
+                // nameless without this and its value reads as a bare index.
+                .accessibilityLabel("Resolution")
+                .accessibilityValue(Text(verbatim: controller.looksLikeLabel(modes)))
                 .onChange(of: controller.sliderIndex) { _, v in
                     let snapped = v.rounded()
                     if snapped != controller.sliderIndex { controller.sliderIndex = snapped }

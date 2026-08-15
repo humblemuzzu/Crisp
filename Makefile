@@ -6,6 +6,7 @@
 #                   (STRICT=1 adds -warnings-as-errors, which is what CI builds with)
 #   make test       generate the Xcode project and run unit tests
 #   make boundaries architecture gates: AGENTS.md §3 as a build failure (no Xcode needed)
+#   make accessibility  every interactive control is named in source (no Xcode needed)
 #   make check      lint + boundaries + tests + localization keys, everything CI enforces:
 #                   run before pushing
 #                   (auto-run on every push after: git config core.hooksPath .githooks)
@@ -59,7 +60,7 @@ CRISPCTL_FLAGS := -O -swift-version 5 -strict-concurrency=minimal -parse-as-libr
                   -framework IOKit -framework CoreGraphics
 
 .DEFAULT_GOAL := help
-.PHONY: help dev compile crispctl strict-build test boundaries lint loc-check check preflight build dmg release clean
+.PHONY: help dev compile crispctl strict-build test boundaries accessibility lint loc-check check preflight build dmg release clean
 
 help:
 	@echo "Crisp — make targets:"
@@ -68,6 +69,7 @@ help:
 	@echo "  make crispctl   compile ./crispctl-bin, the DDC CLI"
 	@echo "  make test       generate the Xcode project and run unit tests"
 	@echo "  make boundaries architecture gates (AGENTS.md §3), no Xcode needed"
+	@echo "  make accessibility  every interactive control is named in source, no Xcode needed"
 	@echo "  make check      lint + boundaries + tests + localization keys, everything CI enforces"
 	@echo "  make preflight  can this machine produce a notarized release? (docs/RELEASING.md)"
 	@echo "  make build      signed universal DMG, no Xcode (scripts/release.sh v$(VERSION))"
@@ -99,6 +101,14 @@ test:
 boundaries:
 	./scripts/check-boundaries.sh
 
+# Every Button/Slider/Toggle in the policed views is given a name in source, and
+# every titled window an accessibility identifier. Static: a runtime AX query
+# needs a GUI session and a running menu-bar app, which no CI runner has. The
+# script's header is explicit about what that can and cannot prove;
+# `./scripts/check-accessibility.sh --runtime` is the optional live companion.
+accessibility:
+	./scripts/check-accessibility.sh
+
 # The zero-warning baseline exactly as CI builds it: both binaries, warnings as
 # errors. Separate from `compile` so the plain target stays permissive.
 strict-build:
@@ -122,8 +132,8 @@ loc-check:
 # Everything CI enforces (lint + boundaries + build + tests + localization keys),
 # locally. Boundaries run first: they are the cheapest and the most likely to be
 # what an unfamiliar contributor trips over.
-check: lint boundaries strict-build test loc-check
-	@echo "check passed: lint clean, boundaries held, zero warnings, tests green, localization keys complete"
+check: lint boundaries accessibility strict-build test loc-check
+	@echo "check passed: lint clean, boundaries held, controls named, zero warnings, tests green, localization keys complete"
 
 # Release credentials only: a Developer ID Application certificate and stored
 # notarization credentials. Builds nothing, so it is the cheapest way to find out
