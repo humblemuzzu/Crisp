@@ -53,6 +53,7 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         static let ddcCacheTTL            = "crisp.ddcCacheTTL"
         static let colorPickerHistory     = "crisp.colorPickerHistory"
         static let brightnessKeyTarget    = "crisp.brightnessKeyTarget"
+        static let hotkeyBindings         = "crisp.hotkeyBindings"
         static let onboardingCompleted    = "crisp.onboarding.completed"
         // Per-display keys use prefix + displayID
         static let brightnessPrefix       = "crisp.brightness_"
@@ -117,6 +118,23 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
     @Published var brightnessKeySelectedDisplayUUIDs: Set<DisplayUUID> = [] {
         didSet {
             DisplayStateStore.shared.setMembership(\.brightnessKeySelected, to: brightnessKeySelectedDisplayUUIDs)
+        }
+    }
+
+    /// User-assigned global keyboard shortcuts (`HotkeyService`). Empty by
+    /// default: claiming a system-wide combination nobody asked for is how two
+    /// apps end up fighting over one.
+    ///
+    /// App-level rather than per-display, like `brightnessKeyTarget` — a shortcut
+    /// is a preference about the keyboard, and AGENTS.md §3.3's UUID rule is
+    /// about display state, which this is not. Stored as JSON in a single key so
+    /// the whole set is written and read atomically; `HotkeyBindings`' decoder is
+    /// what refuses anything a hand edit could have put there.
+    @Published var hotkeyBindings: HotkeyBindings = .empty {
+        didSet {
+            guard let data = try? JSONEncoder().encode(hotkeyBindings),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            defaults.set(json, forKey: Keys.hotkeyBindings)
         }
     }
 
@@ -196,6 +214,12 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         brightnessKeyTarget = defaults.string(forKey: Keys.brightnessKeyTarget)
             .flatMap(BrightnessKeyTarget.init(rawValue:)) ?? .underCursor
         brightnessKeySelectedDisplayUUIDs = DisplayStateStore.shared.uuids { $0.brightnessKeySelected == true }
+        // A corrupt or hand-broken value decodes to nothing rather than throwing:
+        // an unreadable shortcut file must cost the user their shortcuts, never
+        // their launch.
+        hotkeyBindings = defaults.string(forKey: Keys.hotkeyBindings)
+            .flatMap { $0.data(using: .utf8) }
+            .flatMap { try? JSONDecoder().decode(HotkeyBindings.self, from: $0) } ?? .empty
         reapplyDDCOnReconnect = defaults.object(forKey: Keys.reapplyDDCOnReconnect) != nil
             ? defaults.bool(forKey: Keys.reapplyDDCOnReconnect) : true
     }

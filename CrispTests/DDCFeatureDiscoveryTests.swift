@@ -27,6 +27,21 @@ final class DDCFeatureDiscoveryTests: XCTestCase {
     private let sharpness = DDCFeatureID.sharpness.spec
     private let input = DDCFeatureID.input.spec
 
+    /// The tests' stand-in for one of the app's three confirmation sites.
+    ///
+    /// It exists because `DestructiveWriteConsent`'s escape hatch is deliberate
+    /// and this is what it is for: the real conformers keep their initialisers
+    /// `fileprivate` to `DDCFeatureViews.swift`, `AutomationService.swift` and
+    /// `DDCFeatureService.swift`, none of which is in this headless target. What
+    /// the suite can still pin is the shape of the rule — that a confirmed
+    /// authorization exists only where something produced a consent, and that a
+    /// caller with no consent has nothing to say but `.automatic`.
+    private struct TestConsent: DestructiveWriteConsent {
+        let consentSite = "a test stood in for a confirmation site"
+    }
+
+    private var confirmed: DDCFeatureDiscovery.Authorization { .confirmed(by: TestConsent()) }
+
     private func quirk(_ confidence: QuirkConfidence) -> QuirkFeature {
         QuirkFeature(range: QuirkRange(min: 0, max: 100), values: [], confidence: confidence, complete: false)
     }
@@ -183,7 +198,7 @@ final class DDCFeatureDiscoveryTests: XCTestCase {
                        "the refusal carries the registry's hazard, so a log line says what was at stake")
 
         XCTAssertTrue(
-            DDCFeatureDiscovery.authorize(input, resolution: proven(input), authorization: .userConfirmed).isAllowed
+            DDCFeatureDiscovery.authorize(input, resolution: proven(input), authorization: confirmed).isAllowed
         )
     }
 
@@ -211,7 +226,7 @@ final class DDCFeatureDiscoveryTests: XCTestCase {
         let resolution = DDCFeatureDiscovery.resolve(spec, evidence: .init(capabilitiesAdvertises: true))
         XCTAssertEqual(resolution.availability, .unproven)
         XCTAssertFalse(
-            DDCFeatureDiscovery.authorize(spec, resolution: resolution, authorization: .userConfirmed).isAllowed,
+            DDCFeatureDiscovery.authorize(spec, resolution: resolution, authorization: confirmed).isAllowed,
             "confirmed or not, an unproven feature is not written"
         )
     }
@@ -223,7 +238,7 @@ final class DDCFeatureDiscoveryTests: XCTestCase {
     func testUnprovenHarmlessFeatureIsStillReadOnly() {
         let resolution = DDCFeatureDiscovery.resolve(sharpness, evidence: .init(capabilitiesAdvertises: true))
         let decision = DDCFeatureDiscovery.authorize(
-            sharpness, resolution: resolution, authorization: .userConfirmed
+            sharpness, resolution: resolution, authorization: confirmed
         )
         XCTAssertFalse(decision.isAllowed)
         XCTAssertEqual(decision.refusalReason?.contains("0x87"), true)
@@ -248,7 +263,7 @@ final class DDCFeatureDiscoveryTests: XCTestCase {
     func testReadOnlyFeatureIsRefusedByTheGate() {
         let spec = DDCFeatureID.displayTechnologyType.spec
         let decision = DDCFeatureDiscovery.authorize(
-            spec, resolution: proven(spec), authorization: .userConfirmed
+            spec, resolution: proven(spec), authorization: confirmed
         )
         XCTAssertFalse(decision.isAllowed)
         XCTAssertEqual(decision.refusalReason?.contains("read-only"), true)
@@ -320,7 +335,7 @@ final class DDCFeatureDiscoveryTests: XCTestCase {
         transport.setValue(50, max: 100, displayID: 7, code: 0x0C)
 
         let approval = drivePercentPump(
-            .colorTemperature, raw: 95, authorization: .userConfirmed, transport: transport
+            .colorTemperature, raw: 95, authorization: confirmed, transport: transport
         )
 
         guard case .approved(let write) = approval else {
@@ -357,12 +372,90 @@ final class DDCFeatureDiscoveryTests: XCTestCase {
         for feature in DDCFeatureID.allCases {
             let spec = feature.spec
             guard case .approved(let write) = DDCFeatureDiscovery.approve(
-                spec, value: 42, resolution: proven(spec), authorization: .userConfirmed
+                spec, value: 42, resolution: proven(spec), authorization: confirmed
             ) else { continue }
             XCTAssertEqual(write.feature, feature)
             XCTAssertEqual(write.vcp, spec.vcp)
             XCTAssertEqual(write.value, 42)
         }
+    }
+
+    // MARK: - Consent is a value, not a claim
+
+    /// *A caller that did not confirm cannot produce an authorized destructive
+    /// write — for any destructive code, at any resolution.* `.automatic` is the
+    /// only `Authorization` such a caller can build: `.userConfirmed` carries a
+    /// `UserConfirmation` whose initialiser is `fileprivate` to
+    /// `DDCFeatureDiscovery.swift`, so the only route to one is
+    /// `.confirmed(by:)` with a `DestructiveWriteConsent` in hand, and every
+    /// conformer's own initialiser is `fileprivate` to the file that owns a
+    /// confirmation.
+    ///
+    /// This is the property that used to rest on review discipline:
+    /// `DDCFeatureService.setInputSource` hardcoded `.userConfirmed` for every
+    /// caller it would ever have, so an automatic path added later — a preset
+    /// apply, a scheduled reapply — would have compiled clean and reached VCP
+    /// 0x60 unconfirmed.
+    /// Kills mutation: a default `authorization:` argument, a gate that reads
+    /// anything but the token, or making `userConfirmed` a bare case again.
+    func testACallerThatDidNotConfirmCannotAuthorizeADestructiveWrite() {
+        for feature in DDCFeatureID.allCases where feature.spec.destructive {
+            let spec = feature.spec
+            guard spec.access.canWrite else { continue }
+            for resolution in [proven(spec), DDCFeatureDiscovery.resolve(spec, evidence: .init())] {
+                let approval = DDCFeatureDiscovery.approve(
+                    spec, value: 1, resolution: resolution, authorization: .automatic
+                )
+                guard case .refused = approval else {
+                    return XCTFail(
+                        "\(feature.rawValue) handed an ApprovedWrite to a caller that never confirmed"
+                    )
+                }
+            }
+        }
+    }
+
+    /// *…and nothing it asked for is framed.* VCP 0x60 is the sharp one: a write
+    /// that reaches the monitor sends the panel to a port that may have nothing
+    /// attached, and only the monitor's own buttons undo it. The assertion is on
+    /// the transport, because "the gate refused" and "the bus stayed quiet" are
+    /// different claims.
+    /// Kills mutation: a write path that frames first and checks after.
+    func testAnUnconfirmedInputSwitchIsNeverFramed() {
+        let transport = FakeDDCTransport()
+        transport.setValue(19, max: 19, displayID: 7, code: 0x60)
+
+        let approval = DDCFeatureDiscovery.approve(
+            input, value: 17, resolution: proven(input), authorization: .automatic
+        )
+        if case .approved(let write) = approval {
+            let engine = DDCProtocolEngine(transport: transport, sleep: { _ in })
+            _ = engine.writeWithRetry(displayID: 7, command: write.vcp, value: write.value)
+        }
+
+        XCTAssertFalse(approval.decision.isAllowed)
+        XCTAssertEqual(transport.writeCount, 0)
+        XCTAssertTrue(transport.sentFrames.isEmpty)
+        XCTAssertEqual(
+            transport.value(displayID: 7, code: 0x60), 19,
+            "the monitor is still on the input the user left it on"
+        )
+    }
+
+    /// *A confirmed authorization remembers which site vouched, and an automatic
+    /// one has nothing to remember.* The token carries the site so a refusal, a
+    /// log line or a diagnostics row can say which of the three confirmations
+    /// this was — the gate itself treats them alike, and that is deliberate: the
+    /// question it answers is whether a human decided, not who asked them.
+    /// Kills mutation: collapsing the payload back to a bare case.
+    func testAConfirmedAuthorizationCarriesTheSiteThatVouched() {
+        let authorization = confirmed
+        XCTAssertTrue(authorization.isUserConfirmed)
+        XCTAssertEqual(authorization.confirmationSite, TestConsent().consentSite)
+
+        let automatic = DDCFeatureDiscovery.Authorization.automatic
+        XCTAssertFalse(automatic.isUserConfirmed)
+        XCTAssertNil(automatic.confirmationSite)
     }
 
     /// *The two doors into the gate answer identically, for every feature and
@@ -373,7 +466,7 @@ final class DDCFeatureDiscoveryTests: XCTestCase {
     func testApproveAndAuthorizeCannotDisagree() {
         for feature in DDCFeatureID.allCases {
             let spec = feature.spec
-            for authorization in [DDCFeatureDiscovery.Authorization.automatic, .userConfirmed] {
+            for authorization in [DDCFeatureDiscovery.Authorization.automatic, confirmed] {
                 for resolution in [proven(spec), DDCFeatureDiscovery.resolve(spec, evidence: .init())] {
                     XCTAssertEqual(
                         DDCFeatureDiscovery.approve(

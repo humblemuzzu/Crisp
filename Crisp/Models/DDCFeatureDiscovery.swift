@@ -32,6 +32,12 @@ import Foundation
 // it — through the one confirmation gate that already exists for input
 // switching (`InputSourceMenuRow`), never a second copy of it.
 //
+// "The user asked for it" is a value, not a claim: `Authorization.userConfirmed`
+// carries a `UserConfirmation` this file will only mint from a
+// `DestructiveWriteConsent`, and every conformer keeps its initialiser
+// `fileprivate` to the file that owns the decision. See the protocol's own
+// documentation for exactly what that enforces and what it does not.
+//
 // Pure Foundation: it compiles into the headless `CrispTests` target, which is
 // what makes "capabilities may only widen" a test rather than a convention.
 
@@ -178,16 +184,85 @@ enum DDCFeatureDiscovery {
 
     /// Who asked for a write.
     enum Authorization: Equatable, Sendable {
-        /// The app decided by itself: a reconnect reapply, a preset, a periodic
-        /// refresh. Never enough for a destructive feature.
+        /// The app decided by itself: a preset, a periodic refresh, a reapply of
+        /// something nobody chose. Never enough for a destructive feature.
         case automatic
         /// The user asked for this specific write, having been shown what it
-        /// does — either by choosing a value the resolver could already vouch
-        /// for, or by answering the confirmation dialog. There is exactly one
-        /// such dialog in the app (`InputSourceMenuRow`); this is how the rest of
-        /// the code says it went through it.
-        case userConfirmed
+        /// does — either by answering a confirmation dialog, or by choosing a
+        /// value the resolver could already vouch for, or (on reconnect) by
+        /// having chosen this exact value earlier. Which of those it was is in
+        /// the token; the gate treats them alike.
+        case userConfirmed(UserConfirmation)
+
+        /// The only way to build a `.userConfirmed`: hand it a consent the
+        /// caller could only be *holding*, never spelling.
+        static func confirmed(by consent: some DestructiveWriteConsent) -> Authorization {
+            .userConfirmed(UserConfirmation(site: consent.consentSite))
+        }
+
+        var isUserConfirmed: Bool {
+            if case .userConfirmed = self { return true }
+            return false
+        }
+
+        /// Which confirmation site vouched, for a log line or a diagnostics row.
+        var confirmationSite: String? {
+            guard case .userConfirmed(let confirmation) = self else { return nil }
+            return confirmation.site
+        }
     }
+
+    /// Proof that a specific human decided on a specific destructive write.
+    ///
+    /// The initialiser is `fileprivate` and the only thing in this file that
+    /// calls it is `Authorization.confirmed(by:)`, which demands a
+    /// `DestructiveWriteConsent`. That indirection is the whole point. Before it,
+    /// the confirmed state was a bare enum case, so `.userConfirmed` was a claim
+    /// any caller in the module could make — and `DDCFeatureService.setInputSource`
+    /// made it once, hardcoded, on behalf of every caller it would ever have. Its
+    /// three callers were correct only because each happened to confirm upstream;
+    /// a fourth (a preset apply, a scheduled reapply) would have compiled clean
+    /// and put an unconfirmed VCP 0x60 write on the bus.
+    struct UserConfirmation: Equatable, Sendable {
+        /// Which site vouched, in the words a refusal or a log line should use.
+        /// Carried for reporting only — the gate does not read it.
+        let site: String
+
+        fileprivate init(site: String) { self.site = site }
+    }
+}
+
+/// Something a caller can only hold because a particular human decision
+/// happened. The currency `DDCFeatureDiscovery.Authorization.confirmed(by:)`
+/// takes, so that "the user asked for this" is a value that had to be obtained
+/// rather than an enum case anyone can type.
+///
+/// Each conforming type lives in the file that owns its decision and keeps its
+/// initialiser `fileprivate`, which is the mechanism rather than a convention:
+/// inside one Swift module, file privacy is the only thing that makes a value
+/// genuinely unforgeable, so the proof has to be minted where the decision is
+/// made and travel from there. The three that exist:
+///
+///   - `PanelConfirmation` (`Crisp/Views/DDCFeatureViews.swift`) — the app's one
+///     destructive-write alert was answered, or the resolver could already vouch
+///     for the value the user picked.
+///   - `AutomationService.UserConsent` — the `NSAlert` a `crisp://` URL or a
+///     Shortcuts run has to get past.
+///   - `DDCFeatureService.RestoredUserChoice` — a reconnect re-applying the
+///     exact value on record as this user's own choice for this display.
+///
+/// What it does not do is stop someone declaring a fourth conformer; nothing
+/// in-module can. That escape hatch is deliberate — the headless tests need one —
+/// and it is loud: a new type whose documented purpose is "a human decided this",
+/// visible in a diff. What it does stop is the quiet version, a new automatic
+/// caller writing `.userConfirmed` because that is what the parameter wanted.
+protocol DestructiveWriteConsent: Sendable {
+    /// How the site should be named in a log line: second person, because it
+    /// ends up in a sentence about what the user did.
+    var consentSite: String { get }
+}
+
+extension DDCFeatureDiscovery {
 
     /// Whether a write may go on the wire.
     enum WriteDecision: Equatable, Sendable {
@@ -272,7 +347,7 @@ enum DDCFeatureDiscovery {
                     + "\(resolution.reason). It stays read-only until a quirks entry or a live read says otherwise"
             )
         }
-        guard !spec.destructive || authorization == .userConfirmed else {
+        guard !spec.destructive || authorization.isUserConfirmed else {
             return .refused(
                 reason: "VCP \(spec.vcpText) is destructive and this write was not confirmed by the user. "
                     + (spec.hazard ?? "")

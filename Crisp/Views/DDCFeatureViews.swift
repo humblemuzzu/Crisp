@@ -42,15 +42,54 @@ struct ContrastSliderView: View {
     }
 }
 
+/// Proof that the panel is carrying out the user's own decision about a
+/// destructive DDC write, in the form `DDCFeatureDiscovery` will accept
+/// (`DestructiveWriteConsent`).
+///
+/// Its initialisers are `fileprivate`, so this file — the one that owns the
+/// app's destructive-write dialog and its input menu — is the only place in the
+/// module that can produce one. A write path can therefore ask for a
+/// `PanelConfirmation` and know it did not come from a caller that merely said
+/// so. There are exactly two ways to get one, and both are below.
+struct PanelConfirmation: DestructiveWriteConsent {
+    let consentSite: String
+
+    fileprivate init(consentSite: String) { self.consentSite = consentSite }
+
+    /// The user answered `DestructiveDDCWriteConfirmation`'s alert with its
+    /// destructive button. Minted inside that button's action, so it cannot
+    /// exist unless the alert was on screen and was agreed to.
+    fileprivate static let dialogAnswered = PanelConfirmation(
+        consentSite: "you confirmed it in Crisp's panel"
+    )
+
+    /// The other half of what "confirmed" has always meant here: the user picked
+    /// a value from the app's own control and the resolver could already vouch
+    /// for it — they chose this code before, or the monitor is on it right now,
+    /// or a human verified it on this model (`MonitorQuirkResolver.input`). No
+    /// dialog is shown for those, and none should be.
+    ///
+    /// Failable rather than trusting the branch that calls it: the check that
+    /// decides whether to ask lives *in* the proof, so a call site cannot ask
+    /// one question and mint consent for another.
+    fileprivate init?(vouchedFor option: ResolvedInput) {
+        guard !option.needsConfirmation else { return nil }
+        self.init(consentSite: "you picked an input Crisp can already vouch for")
+    }
+}
+
 /// The confirmation gate for a destructive DDC write.
 ///
 /// There is exactly one of these in the app, and `DDCFeatureDiscovery.authorize`
-/// refuses every destructive write that did not come through it
-/// (`Authorization.userConfirmed`). It is written as a modifier over an arbitrary
-/// payload rather than as part of the input menu so that the next destructive
-/// feature — power mode, OSD lock, restore factory defaults, all of which are in
-/// `DDCFeatureRegistry` and none of which has a control yet — reuses this dialog
-/// instead of growing a second one that is subtly more permissive.
+/// refuses every destructive write that did not come through it — not because
+/// the write path remembers to say `.userConfirmed`, but because it has to hand
+/// over a `PanelConfirmation`, and the only one in existence is the one this
+/// alert's own button hands to `confirm`. It is written as a modifier over an
+/// arbitrary payload rather than as part of the input menu so that the next
+/// destructive feature — power mode, OSD lock, restore factory defaults, all of
+/// which are in `DDCFeatureRegistry` and none of which has a control yet —
+/// reuses this dialog instead of growing a second one that is subtly more
+/// permissive.
 ///
 /// The caller supplies the wording because the wording is the whole value of the
 /// dialog: "are you sure?" tells a user nothing, while "if nothing is attached to
@@ -61,7 +100,9 @@ struct DestructiveDDCWriteConfirmation<Payload>: ViewModifier {
     let confirmLabel: LocalizedStringKey
     @Binding var pending: Payload?
     let message: (Payload) -> String
-    let confirm: (Payload) -> Void
+    /// Takes the consent as well as the payload: the write it performs needs
+    /// one, and this is the only place it can come from.
+    let confirm: (Payload, PanelConfirmation) -> Void
 
     func body(content: Content) -> some View {
         content.alert(
@@ -70,7 +111,7 @@ struct DestructiveDDCWriteConfirmation<Payload>: ViewModifier {
             presenting: pending
         ) { payload in
             Button(confirmLabel, role: .destructive) {
-                confirm(payload)
+                confirm(payload, .dialogAnswered)
                 pending = nil
             }
             // The name is a literal, it just lives at the call site ("Switch"),
@@ -92,7 +133,7 @@ extension View {
         confirmLabel: LocalizedStringKey,
         pending: Binding<Payload?>,
         message: @escaping (Payload) -> String,
-        confirm: @escaping (Payload) -> Void
+        confirm: @escaping (Payload, PanelConfirmation) -> Void
     ) -> some View {
         modifier(DestructiveDDCWriteConfirmation(
             title: title, confirmLabel: confirmLabel,
@@ -179,7 +220,11 @@ struct InputSourceMenuRow: View {
             confirmLabel: "Switch",
             pending: $pendingInput,
             message: confirmationMessage(for:),
-            confirm: { DDCFeatureService.shared.setInputSource($0.code, for: display) }
+            confirm: { option, confirmation in
+                DDCFeatureService.shared.setInputSource(
+                    option.code, for: display, confirmedBy: confirmation
+                )
+            }
         )
     }
 
@@ -190,12 +235,16 @@ struct InputSourceMenuRow: View {
     /// `MonitorQuirkResolver.input`. A label that merely came from a `reported`
     /// database entry or from the generic VESA table is a guess, and this is the
     /// one DDC write the user cannot undo from the Mac.
+    ///
+    /// The question and the answer are the same expression: a code the resolver
+    /// can vouch for yields a `PanelConfirmation`, and a code it cannot yields
+    /// nothing to write with, only a dialog to show.
     private func select(_ option: ResolvedInput) {
-        if option.needsConfirmation {
+        guard let vouched = PanelConfirmation(vouchedFor: option) else {
             pendingInput = option
-        } else {
-            DDCFeatureService.shared.setInputSource(option.code, for: display)
+            return
         }
+        DDCFeatureService.shared.setInputSource(option.code, for: display, confirmedBy: vouched)
     }
 
     private func confirmationMessage(for input: ResolvedInput) -> String {

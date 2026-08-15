@@ -35,6 +35,24 @@ if [ -z "$APP_PATH" ]; then
 fi
 echo "Found app: $APP_PATH"
 
+# The crisp:// automation scheme. Added here rather than in project.yml because
+# the Xcode target generates its Info.plist from INFOPLIST_KEY_* settings, and
+# there is no such setting for CFBundleURLTypes (it is an array of dicts). The
+# other two packaging paths write the same block into the plist they generate
+# (scripts/make-app.sh, scripts/release.sh); this keeps the Xcode path in step,
+# BEFORE signing, since the plist is part of what is signed.
+echo "=== Registering the crisp:// URL scheme ==="
+PLIST="$APP_PATH/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy \
+  -c "Add :CFBundleURLTypes array" \
+  -c "Add :CFBundleURLTypes:0 dict" \
+  -c "Add :CFBundleURLTypes:0:CFBundleURLName string com.crisp.app.automation" \
+  -c "Add :CFBundleURLTypes:0:CFBundleTypeRole string Viewer" \
+  -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" \
+  -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string crisp" \
+  "$PLIST"
+
 # Strip extended attributes (resource forks, .DS_Store detritus) before signing
 echo "=== Stripping extended attributes ==="
 xattr -cr "$APP_PATH"

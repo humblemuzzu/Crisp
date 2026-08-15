@@ -1,4 +1,10 @@
 import Foundation
+import CoreGraphics
+// CGDisplayCreateUUIDFromDisplayID is declared in ColorSync, not CoreGraphics —
+// public API in both, and the app's other call sites only compile without this
+// import because AppKit drags ColorSync in behind them. This file has to stay
+// headless (AGENTS.md §3.6), so it names the framework it actually uses.
+import ColorSync
 
 /// The stable identity every piece of per-display persistence keys on.
 ///
@@ -23,6 +29,33 @@ struct DisplayUUID: Hashable, Codable, Sendable, CustomStringConvertible {
     }
 
     var description: String { rawValue }
+
+    // MARK: - Derivation
+    //
+    // The two halves of how a display's identity string is spelled, as functions
+    // rather than as code copied per call site. There are now three places that
+    // have to agree on it exactly — `DisplayInfo.displayUUID` (what the app
+    // persists under), `crispctl list` (what it prints for a user to paste), and
+    // the `crisp://display/<uuid>/…` grammar (what a link has to match) — and a
+    // one-character disagreement between them is a link that silently targets
+    // nothing.
+
+    /// The UUID string macOS assigns this display, or nil when it has none.
+    /// CoreGraphics, not a private framework: `CGDisplayCreateUUIDFromDisplayID`
+    /// is public API and identity, not UI (AGENTS.md §3.6 allows CoreGraphics in
+    /// `Crisp/Models`).
+    static func systemString(for displayID: CGDirectDisplayID) -> String? {
+        guard let cfUUID = CGDisplayCreateUUIDFromDisplayID(displayID),
+              let string = CFUUIDCreateString(nil, cfUUID.takeRetainedValue()) else { return nil }
+        return string as String
+    }
+
+    /// The fallback identity for a display macOS gives no UUID for: vendor,
+    /// model and serial, which is still far more stable than a
+    /// `CGDirectDisplayID` that macOS reassigns across reconnects.
+    static func fallbackString(vendor: UInt32, model: UInt32, serial: UInt32) -> String {
+        "v\(vendor)-m\(model)-s\(serial)"
+    }
 
     // Encoded as a bare string rather than the synthesized `{"rawValue": …}`
     // wrapper: the persisted document is meant to be readable in a bug report,

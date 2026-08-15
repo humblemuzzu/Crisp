@@ -52,12 +52,12 @@ class DisplayInfo: ObservableObject, Identifiable {
     /// A stable identifier for the physical display that persists across sleep/wake
     /// even if macOS reassigns the CGDirectDisplayID.
     var displayUUID: String {
-        if let cfUUID = CGDisplayCreateUUIDFromDisplayID(displayID),
-           let uuidStr = CFUUIDCreateString(nil, cfUUID.takeRetainedValue()) {
-            return uuidStr as String
-        }
-        // Fallback: vendor+model+serial hash is more stable than raw displayID
-        return "v\(vendorNumber)-m\(modelNumber)-s\(serialNumber)"
+        // Spelled by DisplayUUID, not here: `crispctl list` prints this string
+        // and the crisp:// URL grammar matches on it, so the format has to be one
+        // function rather than three copies of the same interpolation.
+        DisplayUUID.systemString(for: displayID)
+            // Fallback: vendor+model+serial is more stable than the raw displayID.
+            ?? DisplayUUID.fallbackString(vendor: vendorNumber, model: modelNumber, serial: serialNumber)
     }
 
     /// `displayUUID` in the type every persistence API keys on, so a call site

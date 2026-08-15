@@ -167,6 +167,11 @@ tested headlessly.
 | Persistence settings | `Crisp/Services/SettingsService.swift` |
 | Sliders / input menu | `Crisp/Views/BrightnessSliderView.swift`, `Crisp/Views/VolumeSliderView.swift`, `Crisp/Views/DDCFeatureViews.swift`, `Crisp/Views/PanelBlocks.swift` |
 | CLI | `crispctl/main.swift` (shares DDCService + DDCServiceMatcher) |
+| **What automation may ask for, and the destructive rule** | `Crisp/Models/AutomationRequest.swift` |
+| **The `crisp://` grammar** (an attack surface — read the header) | `Crisp/Models/CrispURL.swift` |
+| Executing an automation request; the one confirmation dialog | `Crisp/Services/AutomationService.swift` |
+| Shortcuts (App Intents) entity, query and the six intents | `Crisp/Intents/` |
+| Global hotkeys (Carbon, no Accessibility grant) | `Crisp/Models/HotkeyBinding.swift`, `Crisp/Services/HotkeyService.swift`, `Crisp/Views/HotkeyRecorderView.swift` |
 | Packaging | `scripts/make-app.sh` |
 | Architecture gates (§3.1, §3.6) | `scripts/check-boundaries.sh` |
 | Accessibility gate (named controls, window identifiers) | `scripts/check-accessibility.sh`, findings in `reference/accessibility.md` |
@@ -256,6 +261,30 @@ event tap armed` once granted, and `brightness key: adjusting external display
   also not evidence of support (the LG 27MD5KL advertises dozens and answers
   three), so a capabilities-only feature is offered read-only and unproven.
 - **Reconnect reapply of input is opt-in per display and off by default.**
+- **Automation cannot perform a destructive write by itself.** The URL scheme,
+  the Shortcuts intents and the hotkeys all go through
+  `AutomationRequest.plan`, whose answer for anything the registry marks
+  destructive can only be "ask the user" — there is no parameter, flag or
+  preference that changes that, and the consent is a `fileprivate`-initialised
+  token only the dialog can mint (`AutomationService.UserConsent`). A URL is the
+  sharp case: any web page can open `crisp://…`. `docs/automation.md` has the
+  full model; the exhaustive property is pinned in `AutomationRequestTests`.
+- **"The user confirmed this" is a value, at the wire too.**
+  `DDCFeatureDiscovery.Authorization.userConfirmed` carries a `UserConfirmation`
+  that is only minted from a `DestructiveWriteConsent`, and each of the three
+  conformers keeps its initialiser `fileprivate` to the file that owns a
+  confirmation: `PanelConfirmation` (the panel's alert, and the branch where the
+  resolver could already vouch for the code), `AutomationService.UserConsent`
+  (the automation dialog), and `DDCFeatureService.RestoredUserChoice` (a
+  reconnect re-applying the exact input on record as this user's own choice —
+  it refuses to exist for any other value). `setInputSource` takes that consent
+  from its caller; it used to assert `.userConfirmed` on behalf of all of them,
+  which made a future automatic caller a silent bypass. Declaring a fourth
+  conformer is the remaining escape hatch: in-module nothing can prevent it, but
+  it is a visible type declaration in a diff, not a one-word argument.
+- **There is deliberately no HTTP server or local socket.** BetterDisplay binds
+  `localhost:55777`; the argument for not doing so is written down in
+  `docs/automation.md` rather than left as an omission.
 - The user runs BetterDisplay-free now; if it ever returns, this fork must not
   fight it (both write the same DDC registers; last writer wins).
 

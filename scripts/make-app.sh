@@ -17,8 +17,8 @@ swiftc -O -swift-version 5 -strict-concurrency=minimal -parse-as-library \
     -import-objc-header Crisp/Crisp-Bridging-Header.h \
     -framework AppKit -framework SwiftUI -framework IOKit -framework CoreAudio \
     -Xlinker -undefined -Xlinker dynamic_lookup \
-    Crisp/App/*.swift Crisp/Models/*.swift Crisp/Services/*.swift \
-    Crisp/Views/*.swift Crisp/Utilities/*.swift \
+    Crisp/App/*.swift Crisp/Intents/*.swift Crisp/Models/*.swift \
+    Crisp/Services/*.swift Crisp/Views/*.swift Crisp/Utilities/*.swift \
     -o Crisp-bin
 
 echo "==> Assembling ${APP}..."
@@ -79,6 +79,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<!-- The crisp:// automation scheme (Crisp/Models/CrispURL.swift). Registering
+	     it is what lets anything on the machine hand Crisp a URL, which is why the
+	     parser refuses everything outside its grammar and why a destructive write
+	     (VCP 0x60 and friends) can only be applied through the confirmation dialog
+	     in AutomationService — there is no URL parameter that skips it. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.crisp.app.automation</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>crisp</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Crisp uses System Events to switch Dark Mode with the system's animated transition.</string>
 	<key>NSHumanReadableCopyright</key>

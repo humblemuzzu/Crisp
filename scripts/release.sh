@@ -358,6 +358,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>CFBundleVersion</key><string>${VERSION}</string>
 	<key>LSMinimumSystemVersion</key><string>14.0</string>
 	<key>LSUIElement</key><true/>
+	<!-- The crisp:// automation scheme; see scripts/make-app.sh for the same
+	     block and Crisp/Models/CrispURL.swift for what the app will accept. -->
+	<key>CFBundleURLTypes</key><array><dict>
+		<key>CFBundleURLName</key><string>com.crisp.app.automation</string>
+		<key>CFBundleTypeRole</key><string>Viewer</string>
+		<key>CFBundleURLSchemes</key><array><string>crisp</string></array>
+	</dict></array>
 	<key>NSHumanReadableCopyright</key><string>Crisp - Free &amp; Open Source</string>
 	<key>NSAppleEventsUsageDescription</key><string>Crisp uses System Events to switch Dark Mode with the system's animated transition.</string>
 	<key>CFBundleSupportedPlatforms</key><array><string>MacOSX</string></array>

@@ -115,6 +115,21 @@ targets:
       # app allowed to emit `verified`, so its tests push the output back through
       # MonitorQuirks' decoder and assert the loader agrees.
       - path: Crisp/Models/InputCalibrationReport.swift
+      # The automation surface's decision core (AutomationRequestTests): what a
+      # URL, a shortcut or a hotkey is allowed to ask for. The property that
+      # matters — no automation origin can apply a destructive VCP write on its
+      # own — is asserted here over the whole registry rather than trusted at the
+      # three entry points.
+      - path: Crisp/Models/AutomationRequest.swift
+      # The crisp:// grammar (CrispURLTests). Pure text in, a request or a
+      # refusal out, which is what lets a hostile URL be tested without
+      # registering a URL handler or running the app.
+      - path: Crisp/Models/CrispURL.swift
+      # Global keyboard shortcuts as data (HotkeyBindingTests): which combinations
+      # are legal, and what happens when two actions want the same one. Carbon
+      # lives in Crisp/Services/HotkeyService.swift; none of it is needed to test
+      # the rules.
+      - path: Crisp/Models/HotkeyBinding.swift
       # The first-run guide's decision core (OnboardingPlanTests): which screens
       # to show, what each attached display means, the no-monitor case. Foundation
       # only; the window and its prose live in Crisp/Views/OnboardingView.swift.
@@ -142,6 +157,10 @@ targets:
       - path: Crisp/Models/DDCServiceMatcher.swift
       - path: Crisp/Models/DDCCapabilities.swift
       - path: Crisp/Models/DDCFeatureRegistry.swift
+      # `crispctl list` prints each display's stable UUID, because that is what a
+      # crisp:// link and a Shortcuts action have to name. Derived by the same
+      # functions the app uses so the two spellings cannot drift.
+      - path: Crisp/Models/DisplayUUID.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.crisp.cli

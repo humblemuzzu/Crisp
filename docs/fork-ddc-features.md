@@ -83,6 +83,15 @@ verified against the MA320U in `scripts/ddc-probe.swift` and via `crispctl`).
   - It advertises `0x87` (sharpness) and 39 codes Crisp has no name for, which
     is the list of things worth measuring next — not a list of things that work.
 
+## Automation
+
+Shortcuts (App Intents), a `crisp://` URL scheme and user-assigned global
+hotkeys, all going through one decision core so they cannot drift into three
+policies — including the rule that **no automation surface can perform a
+destructive DDC write without a confirmation dialog**, with no bypass parameter
+from any of them. There is deliberately no HTTP server. See
+[`docs/automation.md`](automation.md).
+
 ## Notes
 
 - Input labels use the VESA MCCS 0x60 table; some BenQ models use their own

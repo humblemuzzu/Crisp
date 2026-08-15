@@ -385,23 +385,29 @@ final class DDCFeatureService: ObservableObject {
     ///
     /// The confirmation gate is the *caller's* job (see `InputSourceMenuRow`):
     /// this method is also how a confirmed switch is finally performed, so it
-    /// cannot refuse unverified codes itself. Saving the code as the user's own
-    /// choice is what later promotes it to the user-override tier — a code the
-    /// user picked and whose screen came back is the best evidence there is.
+    /// cannot refuse unverified codes itself. What it can do — and now does — is
+    /// refuse to speak for its callers: `consent` is a value only a confirmation
+    /// site can mint, so a future automatic path cannot reach VCP 0x60 through
+    /// here by writing down the word "confirmed". This method used to declare
+    /// `.userConfirmed` to the gate on behalf of every caller it would ever have.
+    ///
+    /// Saving the code as the user's own choice is what later promotes it to the
+    /// user-override tier — a code the user picked and whose screen came back is
+    /// the best evidence there is.
     ///
     /// Which is why nothing is recorded until the monitor acks the write. A
     /// transient I²C failure must not promote an unverified code to the
     /// no-confirmation tier for every future selection and for the opt-in
     /// reapply-on-reconnect path: that would be evidence the app invented.
-    func setInputSource(_ value: UInt16, for display: DisplayInfo) {
+    func setInputSource(
+        _ value: UInt16, for display: DisplayInfo, confirmedBy consent: some DestructiveWriteConsent
+    ) {
         guard display.inputSourceSupported else { return }
         let uuid = display.stateUUID
-        // Through the registry's write gate like every other destructive feature,
-        // declared `.userConfirmed` because both callers are the user's own
-        // choice: the menu (which asks first for any code the resolver cannot
-        // vouch for) and the opt-in reconnect reapply of a code this user picked
-        // and whose screen came back.
-        writeFeature(.input, raw: value, for: display, authorization: .userConfirmed) { acked in
+        // Through the registry's write gate like every other destructive
+        // feature, carrying the caller's own consent rather than an assertion
+        // made here.
+        writeFeature(.input, raw: value, for: display, authorization: .confirmed(by: consent)) { acked in
             guard acked else { return }
             Task { @MainActor in
                 // `inputSource` feeds `MonitorQuirkResolver.input`'s "the monitor
@@ -518,6 +524,34 @@ final class DDCFeatureService: ObservableObject {
 
     // MARK: - Reconnect re-application
 
+    /// Consent for the one destructive write this service issues without a
+    /// dialog in front of it: re-applying, after a reconnect, the input the user
+    /// themselves last chose on this display.
+    ///
+    /// **Why that is the user's decision and not the app's.** `setInputSource`
+    /// records `input` only once the monitor has acknowledged a code the user
+    /// picked — through the panel's dialog, or through a code the resolver could
+    /// already vouch for, or through the automation confirmation. A value on
+    /// disk is therefore one human's decision about one physical panel, made
+    /// while looking at it. Re-applying *that exact value* to *that same
+    /// display*, and only when the per-display "reapply input on reconnect"
+    /// toggle that same user turned on says to, carries out that decision rather
+    /// than making a new one. Anything else this service might want to do on its
+    /// own is `.automatic`, and the gate refuses it.
+    ///
+    /// The failable initialiser is what makes that an argument rather than an
+    /// excuse: it refuses unless the value equals what is on record for that
+    /// display, so a later automatic path — a preset, a schedule, a "restore
+    /// everything" button — cannot launder a code the user never chose through
+    /// this type.
+    struct RestoredUserChoice: DestructiveWriteConsent {
+        let consentSite = "you chose this input on this display before"
+
+        fileprivate init?(reapplying value: UInt16, recordedFor uuid: DisplayUUID, in store: DisplayStateStore) {
+            guard store.state(for: uuid).input == value else { return nil }
+        }
+    }
+
     /// Called after a display (re)connects and DDC has settled. Re-applies
     /// saved brightness/contrast/volume, and input if that toggle is on.
     /// Skips values that are already within a small deadband of the hardware,
@@ -538,8 +572,9 @@ final class DDCFeatureService: ObservableObject {
             display.volume = saved
         }
         if reapplyInputEnabled(for: uuid), let saved = savedInput(for: uuid),
-           display.inputSourceSupported, saved != display.inputSource {
-            setInputSource(saved, for: display)
+           display.inputSourceSupported, saved != display.inputSource,
+           let consent = RestoredUserChoice(reapplying: saved, recordedFor: uuid, in: store) {
+            setInputSource(saved, for: display, confirmedBy: consent)
         }
     }
 

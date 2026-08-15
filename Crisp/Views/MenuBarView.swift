@@ -456,6 +456,7 @@ struct SettingsView: View {
     // other section, or it reopens still expanded.
     @State private var showSupport = false
     @State private var showBrightnessKeys = false
+    @State private var showHotkeys = false
     // Accessibility trust drives which Brightness Keys UI shows (toggle vs target menu).
     // AXIsProcessTrusted() isn't observable and the panel content mounts once, so re-read
     // it on every open (below) or the section shows a stale state after the user grants or
@@ -670,6 +671,24 @@ struct SettingsView: View {
                 BrightnessKeysPermissionNotice()
             }
 
+            // User-assigned global shortcuts (Carbon RegisterEventHotKey). A
+            // separate section from Brightness Keys above on purpose: that one is
+            // about redirecting the hardware keys and needs Accessibility, this
+            // one needs nothing and keeps working when that grant goes stale.
+            ExpandableRow(
+                icon: "command",
+                iconColor: .accentColor,
+                iconActive: !settings.hotkeyBindings.assignments.isEmpty,
+                label: "Keyboard Shortcuts",
+                subtitle: settings.hotkeyBindings.assignments.isEmpty
+                    ? String(localized: "None assigned")
+                    : String(localized: "\(settings.hotkeyBindings.assignments.count) assigned"),
+                isExpanded: $showHotkeys
+            )
+            if showHotkeys {
+                KeyboardShortcutsSection()
+            }
+
             // Launch at login
             Toggle(isOn: Binding(
                 get: { settings.launchAtLogin },
@@ -733,6 +752,7 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .crispPanelDidClose)) { _ in
             showSupport = false
             showBrightnessKeys = false
+            showHotkeys = false
         }
     }
 }

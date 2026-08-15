@@ -135,6 +135,13 @@ struct CrispCLI {
         }
         for d in displays {
             print("[\(d.index)] displayID=\(d.displayID) vendor=0x\(String(format: "%04X", d.vendor)) product=0x\(String(format: "%04X", d.product)) serial=\(d.serial)")
+            // The stable identity, which is what the app persists under and what
+            // a crisp:// link has to name (a displayID is reassigned across
+            // reconnects). Printed by the same functions the app derives it with,
+            // so what is pasted here always matches what the app looks up.
+            let uuid = DisplayUUID.systemString(for: d.displayID)
+                ?? DisplayUUID.fallbackString(vendor: d.vendor, model: d.product, serial: d.serial)
+            print("    uuid: \(uuid)")
             for code in [UInt8(0x10), 0x12, 0x60, 0x62] {
                 let name = featureName(code)
                 if let r = runAsync({ cb in DDCService.shared.readAsync(displayID: d.displayID, command: code, completion: cb) }),

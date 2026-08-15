@@ -217,6 +217,37 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // the split-canvas migration.
         Task { await UpdateService.shared.checkForUpdates() }
 
+        // User-assigned global shortcuts. Carbon's RegisterEventHotKey, so unlike
+        // the brightness-key tap above this needs no Accessibility grant and
+        // cannot be silently killed by a stale TCC record — see HotkeyService.
+        // Registers nothing until the user has assigned something.
+        HotkeyService.shared.start()
+
+        // `crisp://displays/refresh` and the Refresh Displays shortcut. The
+        // DisplayManager lives here (one instance, injected into the view tree),
+        // so the automation surface asks for a refresh rather than holding a
+        // second global handle on it.
+        NotificationCenter.default.addObserver(
+            forName: .crispAutomationRefreshDisplays, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.displayManager.refreshDisplays() }
+        }
+    }
+
+    // MARK: - URL scheme
+
+    /// Entry point for `crisp://` URLs (registered in the bundle's
+    /// CFBundleURLTypes; see scripts/make-app.sh).
+    ///
+    /// Anything on the machine can open one of these, including a web page the
+    /// user merely followed a link on, so nothing is decided here: `CrispURL`
+    /// refuses everything outside its grammar, `AutomationRequest.plan` refuses
+    /// every destructive write outright, and `AutomationService` is the only
+    /// thing that can turn one into an action — after asking.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            Task { @MainActor in await AutomationService.shared.handle(url) }
+        }
     }
 
     /// One-shot re-sync of everything that can drift while the panel is closed
@@ -252,6 +283,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSWorkspace.shared.notificationCenter.removeObserver(obs)
         }
         BrightnessKeyService.shared.stop()
+        // Carbon hot keys are process-scoped, but releasing them explicitly keeps
+        // a relaunch from racing its own previous registrations.
+        HotkeyService.shared.stop()
         // Drop EDR overlays and restore SDR on externals Crisp switched to HDR,
         // so no monitor is left bright with no boost and no DDC control.
         BrightnessBoostService.shared.prepareForTermination()

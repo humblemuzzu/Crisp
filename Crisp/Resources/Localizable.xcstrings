@@ -44,12 +44,35 @@
         }
       }
     },
+    "%@" : {
+
+    },
+    "%@ asked Crisp to set %@ to %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ asked Crisp to set %2$@ to %3$@."
+          }
+        }
+      }
+    },
     "%@ color" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@"
+          }
+        }
+      }
+    },
+    "%@ is already the shortcut for %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ is already the shortcut for %2$@."
           }
         }
       }
@@ -107,14 +130,29 @@
     "%lld" : {
       "shouldTranslate" : false
     },
+    "%lld assigned" : {
+
+    },
     "%lld%%" : {
       "shouldTranslate" : false
+    },
+    "%lld%% brightness" : {
+
     },
     "×" : {
       "shouldTranslate" : false
     },
     "∞" : {
       "shouldTranslate" : false
+    },
+    "a crisp:// link" : {
+
+    },
+    "a keyboard shortcut" : {
+
+    },
+    "a shortcut" : {
+
     },
     "Accessibility looks granted, but macOS is refusing it" : {
 
@@ -138,6 +176,9 @@
           }
         }
       }
+    },
+    "Add ⌘, ⌥ or ⌃ to the shortcut. A shortcut without one would take that key from every app." : {
+
     },
     "Adds finer in-between steps for how large everything looks" : {
       "localizations" : {
@@ -193,7 +234,23 @@
         }
       }
     },
+    "Allow" : {
+
+    },
+    "Allow %@ to change %@?" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Allow %1$@ to change %2$@?"
+          }
+        }
+      }
+    },
     "Also in Settings. It explains why any control is missing, and copies a bug report." : {
+
+    },
+    "Another app already uses this shortcut, so macOS would not give it to Crisp." : {
 
     },
     "Are you sure you want to delete this virtual display configuration?" : {
@@ -329,6 +386,9 @@
         }
       }
     },
+    "Brightness down" : {
+
+    },
     "Brightness Keys" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -354,6 +414,9 @@
       }
     },
     "Brightness path" : {
+
+    },
+    "Brightness up" : {
 
     },
     "Bug report copied to the clipboard." : {
@@ -785,7 +848,6 @@
       }
     },
     "Display" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1076,6 +1138,12 @@
         }
       }
     },
+    "Get Display Info" : {
+
+    },
+    "Get info about ${display}" : {
+
+    },
     "Grant Accessibility Access" : {
 
     },
@@ -1205,6 +1273,9 @@
     "Input Source" : {
 
     },
+    "Input source code" : {
+
+    },
     "Invert Colors" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1234,6 +1305,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保持亮度偏移"
+          }
+        }
+      }
+    },
+    "Keyboard Shortcuts" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "键盘快捷键"
           }
         }
       }
@@ -1339,6 +1421,9 @@
         }
       }
     },
+    "Mute" : {
+
+    },
     "My Preset" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1440,6 +1525,9 @@
           }
         }
       }
+    },
+    "None assigned" : {
+
     },
     "not mapped yet" : {
 
@@ -1641,6 +1729,9 @@
         }
       }
     },
+    "Press keys…" : {
+
+    },
     "Profile" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1693,6 +1784,9 @@
         }
       }
     },
+    "Re-enumerates displays and re-reads their DDC features. Reads only; nothing is written." : {
+
+    },
     "Reapply DDC settings on reconnect" : {
 
     },
@@ -1729,6 +1823,9 @@
         }
       }
     },
+    "Record" : {
+
+    },
     "red" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1740,6 +1837,9 @@
       }
     },
     "Refresh" : {
+
+    },
+    "Refresh Displays" : {
 
     },
     "Refresh Rate" : {
@@ -1765,6 +1865,9 @@
           }
         }
       }
+    },
+    "Remove the shortcut for %@" : {
+
     },
     "Replace the stored values above with this display's current settings" : {
       "localizations" : {
@@ -1808,6 +1911,9 @@
           }
         }
       }
+    },
+    "Returns what Crisp last read from a display: brightness, contrast, volume and input source." : {
+
     },
     "Save" : {
       "localizations" : {
@@ -1860,6 +1966,33 @@
         }
       }
     },
+    "Set Brightness" : {
+
+    },
+    "Set brightness of ${display} to ${value}" : {
+
+    },
+    "Set Contrast" : {
+
+    },
+    "Set contrast of ${display} to ${value}" : {
+
+    },
+    "Set Volume" : {
+
+    },
+    "Set volume of ${display} to ${value}" : {
+
+    },
+    "Sets a display's brightness. Uses the monitor's own backlight over DDC where it answers." : {
+
+    },
+    "Sets a display's hardware contrast (VCP 0x12), for monitors that answer a contrast read." : {
+
+    },
+    "Sets the speaker volume of a monitor that exposes DDC volume (VCP 0x62)." : {
+
+    },
     "Settings" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1871,6 +2004,9 @@
       }
     },
     "Setup Guide" : {
+
+    },
+    "Shortcut for %@" : {
 
     },
     "Show all resolutions" : {
@@ -1961,6 +2097,9 @@
     "Switch" : {
 
     },
+    "Switch ${display} to input code ${code}" : {
+
+    },
     "Switch Back Now" : {
 
     },
@@ -1974,10 +2113,16 @@
         }
       }
     },
+    "Switch Input Source" : {
+
+    },
     "Switch input?" : {
 
     },
     "Switch which machine the monitor is showing, without reaching for its buttons." : {
+
+    },
+    "Switches a monitor to another input, after asking. Crisp always asks: if nothing is attached to that port the screen goes blank and only the monitor's own buttons can bring it back." : {
 
     },
     "Switching back to input %@…" : {
@@ -2074,6 +2219,9 @@
 
     },
     "These are the monitors Crisp can see. The menu bar panel gets one section for each." : {
+
+    },
+    "These shortcuts need no Accessibility access: macOS delivers the key straight to Crisp, so they keep working even when the F1/F2 keys do not." : {
 
     },
     "This display has no DDC channel on this connection, so Crisp dims the image with the GPU's color table instead of the backlight." : {
@@ -2249,6 +2397,12 @@
 
     },
     "Volume" : {
+
+    },
+    "Volume down" : {
+
+    },
+    "Volume up" : {
 
     },
     "Waiting for Accessibility…" : {

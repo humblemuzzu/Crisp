@@ -33,8 +33,8 @@ export DEVELOPER_DIR ?= /Applications/Xcode.app/Contents/Developer
 endif
 
 # swiftc invocation kept in sync with dev.sh's compile step.
-SWIFT_SOURCES := Crisp/App/*.swift Crisp/Models/*.swift Crisp/Services/*.swift \
-                 Crisp/Views/*.swift Crisp/Utilities/*.swift
+SWIFT_SOURCES := Crisp/App/*.swift Crisp/Intents/*.swift Crisp/Models/*.swift \
+                 Crisp/Services/*.swift Crisp/Views/*.swift Crisp/Utilities/*.swift
 SWIFTC_FLAGS := -O -swift-version 5 -strict-concurrency=minimal -parse-as-library \
                 -import-objc-header Crisp/Crisp-Bridging-Header.h \
                 -framework AppKit -framework SwiftUI -framework IOKit -framework CoreAudio \
@@ -55,7 +55,8 @@ CRISPCTL_SOURCES := crispctl/*.swift \
                     Crisp/Services/DDCService.swift Crisp/Services/IOKitDDCTransport.swift \
                     Crisp/Models/DDCPacket.swift Crisp/Models/DDCTransport.swift \
                     Crisp/Models/DDCProtocolEngine.swift Crisp/Models/DDCServiceMatcher.swift \
-                    Crisp/Models/DDCCapabilities.swift Crisp/Models/DDCFeatureRegistry.swift
+                    Crisp/Models/DDCCapabilities.swift Crisp/Models/DDCFeatureRegistry.swift \
+                    Crisp/Models/DisplayUUID.swift
 CRISPCTL_FLAGS := -O -swift-version 5 -strict-concurrency=minimal -parse-as-library \
                   -import-objc-header Crisp/Crisp-Bridging-Header.h \
                   -framework IOKit -framework CoreGraphics
