@@ -53,7 +53,7 @@ targets:
       - path: Crisp/Models/DDCServiceMatcher.swift
       - path: Crisp/Models/RefreshRateFormat.swift
       - path: Crisp/Models/GammaPersistenceKey.swift
-      - path: Crisp/Models/BrightnessCurve.swift
+      - path: Crisp/Models/CombinedBrightness.swift
       - path: Crisp/Models/VariableRefreshModes.swift
     settings:
       base:

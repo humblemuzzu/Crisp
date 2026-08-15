@@ -66,13 +66,14 @@ final class BrightnessKeyService: ObservableObject, @unchecked Sendable {
     private nonisolated static let nxKeytypeSoundDown: Int = 1
     private nonisolated static let nxKeytypeMute: Int = 7
 
-    /// Brightness keys step on a perceptual curve (see BrightnessCurve): still 16 presses
-    /// across the range like macOS, but small near black and large near full, so a press
-    /// feels the same size everywhere instead of flashing at the dark end.
+    /// Brightness keys step a flat 1/16 of the range, matching macOS, BetterDisplay and
+    /// MonitorControl. No extra perceptual curve is applied on top: CombinedBrightness's
+    /// split already does that work, since below its switchover a press moves the gamma
+    /// table and above it a press moves the backlight.
     ///
     /// Above 100 the EDR boost region belongs to BrightnessBoostService and is linear in
-    /// headroom, so it keeps a flat step.
-    private nonisolated static let boostLinearStep: Double = 100.0 / BrightnessCurve.stepsPerRange
+    /// headroom, so it uses the same flat step.
+    private nonisolated static let boostLinearStep: Double = 100.0 / CombinedBrightness.stepsPerRange
 
     /// Next brightness for one key press on `display`. Main-actor isolated because it
     /// reads DisplayInfo's published state; every call site is already on the main actor.
@@ -83,7 +84,7 @@ final class BrightnessKeyService: ObservableObject, @unchecked Sendable {
             let next = current + (up ? boostLinearStep : -boostLinearStep)
             return max(0.0, min(display.maxBrightness, next))
         }
-        return BrightnessCurve.stepped(from: current, up: up)
+        return CombinedBrightness.stepped(from: current, up: up)
     }
     /// Volume keys use the same 1/16 step as macOS's own volume control.
     private nonisolated static let volumeStep: Double = 100.0 / 16.0

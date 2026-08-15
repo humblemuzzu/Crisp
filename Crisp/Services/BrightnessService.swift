@@ -309,14 +309,7 @@ final class BrightnessService: @unchecked Sendable {
                 return
             }
 
-            // Inside the gamma blend region the hardware is pinned at gammaBlendThreshold
-            // and gamma carries everything below it, so a DDC read reports the floor, not
-            // what the user actually sees. Adopting it would snap the slider up to 15 % on
-            // the next refresh (and then a write would push the real backlight there too).
-            // Crisp owns the value while a software dim is engaged.
-            if let factor = currentSoftwareBrightness(for: displayID), factor < 1.0 {
-                return
-            }
+
 
             DDCService.shared.readAsync(
                 displayID: displayID,
@@ -324,7 +317,16 @@ final class BrightnessService: @unchecked Sendable {
             ) { [weak self] result in
                 guard let self else { return }
                 if let result = result, result.max > 0 {
-                    let brightness = Double(result.current) / Double(result.max) * 100.0
+                    // A DDC read reports the backlight only. Below the switchover the
+                    // backlight is parked at its floor and the gamma table carries the
+                    // rest, so the raw read is NOT the value the user sees — adopting it
+                    // would snap the slider to the switchover on every refresh. Fold the
+                    // current software factor back in to recover the combined value.
+                    let hardwarePercent = Double(result.current) / Double(result.max) * 100.0
+                    let softwarePercent = (self.currentSoftwareBrightness(for: displayID) ?? 1.0) * 100.0
+                    let brightness = CombinedBrightness.combined(
+                        hardware: hardwarePercent, software: softwarePercent
+                    )
                     self.ddcAvailableLock.lock()
                     let firstRead = self.ddcAvailable[displayID] != true
                     self.ddcAvailable[displayID] = true
@@ -460,10 +462,10 @@ final class BrightnessService: @unchecked Sendable {
     /// pump still applies the latest value, this just caps the cadence at ~20/sec.
     private let minDDCWriteInterval: TimeInterval = 0.05
 
-    /// DDC 0 on most monitors means "minimum backlight", which is still visibly bright.
-    /// Below this percent we layer gamma dimming on top of the hardware write so the
-    /// bottom of the slider actually reaches dark (gamma keeps its own 5% floor).
-    private let gammaBlendThreshold = 15.0
+    // Brightness is split across the backlight and the gamma table by CombinedBrightness:
+    // below its switchover the backlight parks at its floor and gamma dims, above it gamma
+    // is off and the backlight ramps. See that type for why, and for the evidence that a
+    // monitor's DDC 0 is a normal room brightness rather than anything close to dark.
 
     /// Externals currently in HDR mode. A DisplayHDR monitor manages its own
     /// luminance and silently discards DDC brightness writes (they still ack,
@@ -492,16 +494,13 @@ final class BrightnessService: @unchecked Sendable {
             }
             return
         }
-        // In the blend region the hardware is PINNED at the threshold and gamma dims
-        // below it. Sending `percent` to both dimmers instead multiplies them, making
-        // emitted light quadratic (~percent^2 / threshold) rather than linear: from 7.6 %
-        // a single 6.25-point key step then raised actual light 3.3x, and a step down
-        // dropped it 30x to near black. Pinning makes the product linear again, because
-        // threshold * (percent / threshold) == percent, while still reaching true dark.
-        let hardwarePercent = max(percent, gammaBlendThreshold)
+        // Split the single user-facing value across the two dimmers. Exactly one of them
+        // moves in each region, which is the whole point: driving both at once multiplies
+        // them, and that is what made emitted light quadratic near the bottom.
+        let split = CombinedBrightness.split(combined: percent)
 
         ddcPumpLock.lock()
-        pendingDDCPercent[displayID] = hardwarePercent
+        pendingDDCPercent[displayID] = split.hardware
         let alreadyPumping = ddcPumpActive.contains(displayID)
         if !alreadyPumping { ddcPumpActive.insert(displayID) }
         ddcPumpLock.unlock()
@@ -509,8 +508,8 @@ final class BrightnessService: @unchecked Sendable {
 
         queue.async { [weak self] in
             guard let self else { return }
-            if percent < self.gammaBlendThreshold {
-                self.setSoftwareBrightness(percent / self.gammaBlendThreshold * 100.0, for: displayID)
+            if split.software < 100.0 {
+                self.setSoftwareBrightness(split.software, for: displayID)
             } else if let f = self.currentSoftwareBrightness(for: displayID), f < 1.0 {
                 // Only clear a software dim once DDC has actually succeeded on
                 // this display. While it is still unproven (nil), a display
