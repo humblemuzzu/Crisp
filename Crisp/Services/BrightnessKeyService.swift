@@ -1,8 +1,11 @@
 import AppKit
 import CoreGraphics
 import ApplicationServices
+import os.log
 
 // MARK: - C Event Tap Callback
+
+private let keyLog = Logger(subsystem: "com.crisp.app", category: "BrightnessKeyService")
 
 /// Global C callback for the CGEventTap. `userInfo` carries an Unmanaged<BrightnessKeyService>.
 /// The tap is registered on the main run loop, so this callback always fires on the main thread.
@@ -26,7 +29,7 @@ private func brightnessKeyEventCallback(
 /// Also intercepts the volume/mute keys when the default audio output is a monitor with
 /// DDC speaker volume, routing them to VolumeService (see routeVolumePress).
 @MainActor
-final class BrightnessKeyService: @unchecked Sendable {
+final class BrightnessKeyService: ObservableObject, @unchecked Sendable {
     static let shared = BrightnessKeyService()
     private init() {}
 
@@ -36,6 +39,10 @@ final class BrightnessKeyService: @unchecked Sendable {
     private var runLoopSource: CFRunLoopSource?
     /// Retained Unmanaged reference passed into the C callback. Released in stop().
     private var selfRetained: Unmanaged<BrightnessKeyService>?
+    /// Whether the brightness-key tap is currently installed and consuming events.
+    /// Drives the "Keys Active" row in Settings so the user gets live feedback
+    /// instead of having to guess whether Accessibility took effect.
+    @Published private(set) var isArmed: Bool = false
     /// Monotonic time (systemUptime) of the last tap disable. retryUntilArmed waits a short
     /// settle delay past this before re-arming, so a revoke (whose trust state briefly lags)
     /// resolves before we put an active session tap back in the pipeline. Avoids the kome
@@ -59,8 +66,25 @@ final class BrightnessKeyService: @unchecked Sendable {
     private nonisolated static let nxKeytypeSoundDown: Int = 1
     private nonisolated static let nxKeytypeMute: Int = 7
 
-    /// Each key press moves brightness by 1/16 (≈ 6.25 %), matching macOS native behaviour.
-    private nonisolated static let brightnessStep: Double = 100.0 / 16.0
+    /// Brightness keys step on a perceptual curve (see BrightnessCurve): still 16 presses
+    /// across the range like macOS, but small near black and large near full, so a press
+    /// feels the same size everywhere instead of flashing at the dark end.
+    ///
+    /// Above 100 the EDR boost region belongs to BrightnessBoostService and is linear in
+    /// headroom, so it keeps a flat step.
+    private nonisolated static let boostLinearStep: Double = 100.0 / BrightnessCurve.stepsPerRange
+
+    /// Next brightness for one key press on `display`. Main-actor isolated because it
+    /// reads DisplayInfo's published state; every call site is already on the main actor.
+    @MainActor
+    private static func nextBrightness(for display: DisplayInfo, up: Bool) -> Double {
+        let current = display.brightness
+        if current > 100.0 || (up && current >= 100.0) {
+            let next = current + (up ? boostLinearStep : -boostLinearStep)
+            return max(0.0, min(display.maxBrightness, next))
+        }
+        return BrightnessCurve.stepped(from: current, up: up)
+    }
     /// Volume keys use the same 1/16 step as macOS's own volume control.
     private nonisolated static let volumeStep: Double = 100.0 / 16.0
 
@@ -93,6 +117,7 @@ final class BrightnessKeyService: @unchecked Sendable {
         )
 
         guard let tap else {
+            keyLog.info("tapCreate failed (Accessibility not granted?) — retrying until granted")
             retained.release()
             selfRetained = nil
             retryUntilArmed()
@@ -107,6 +132,8 @@ final class BrightnessKeyService: @unchecked Sendable {
         self.runLoopSource = source
         stopRetrying()
         startTrustWatchdog()
+        isArmed = true
+        keyLog.info("brightness-key event tap armed")
     }
 
     /// Removes the event tap and releases the retained self reference.
@@ -120,6 +147,7 @@ final class BrightnessKeyService: @unchecked Sendable {
         }
         eventTap = nil
         runLoopSource = nil
+        isArmed = false
 
         selfRetained?.release()
         selfRetained = nil
@@ -253,8 +281,10 @@ final class BrightnessKeyService: @unchecked Sendable {
             let kc = event.getIntegerValueField(.keyboardEventKeycode)
             switch kc {
             case 144:
+                keyLog.debug("keyDown 144 (brightness up)")
                 return routeBrightnessPress(up: true, event: event)
             case 145:
+                keyLog.debug("keyDown 145 (brightness down)")
                 return routeBrightnessPress(up: false, event: event)
             default:
                 return Unmanaged.passRetained(event)
@@ -279,6 +309,7 @@ final class BrightnessKeyService: @unchecked Sendable {
         case Self.nxKeytypeBrightnessUp, Self.nxKeytypeBrightnessDown:
             // For key-up events always pass through, only consume key-down on external displays.
             guard isKeyDown else { return Unmanaged.passRetained(event) }
+            keyLog.debug("NX brightness key: \(keyCode, privacy: .public)")
             return routeBrightnessPress(up: keyCode == Self.nxKeytypeBrightnessUp, event: event)
         case Self.nxKeytypeSoundUp, Self.nxKeytypeSoundDown, Self.nxKeytypeMute:
             guard isKeyDown else { return Unmanaged.passRetained(event) }
@@ -294,13 +325,11 @@ final class BrightnessKeyService: @unchecked Sendable {
     /// not also bump the built-in), or a pass-through of `event` when we did not handle it (target
     /// not attached / cursor on built-in / no controllable external).
     nonisolated private func routeBrightnessPress(up: Bool, event: CGEvent) -> Unmanaged<CGEvent>? {
-        let step = up ? Self.brightnessStep : -Self.brightnessStep
-
         // Route by user preference. Read on the main actor, this callback runs on
         // the main run loop (see class docs), so assumeIsolated is safe here.
         switch MainActor.assumeIsolated({ SettingsService.shared.brightnessKeyTarget }) {
         case .allDisplays:
-            Task { @MainActor in self.adjustDisplays(DisplayManagerAccessor.shared.displays, step: step) }
+            Task { @MainActor in self.adjustDisplays(DisplayManagerAccessor.shared.displays, up: up) }
             // Consume: we adjust every display (built-in included) ourselves, so
             // macOS must not also bump the built-in on top.
             return nil
@@ -315,7 +344,7 @@ final class BrightnessKeyService: @unchecked Sendable {
             if anyAttached {
                 Task { @MainActor in
                     let targets = DisplayManagerAccessor.shared.displays.filter { selected.contains($0.displayUUID) }
-                    self.adjustDisplays(targets, step: step)
+                    self.adjustDisplays(targets, up: up)
                 }
                 return nil
             }
@@ -332,6 +361,7 @@ final class BrightnessKeyService: @unchecked Sendable {
         guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) }),
               let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
         else {
+            keyLog.debug("brightness key: no screen under cursor — passing through")
             return Unmanaged.passRetained(event)
         }
 
@@ -350,14 +380,17 @@ final class BrightnessKeyService: @unchecked Sendable {
             return !display.isBuiltin
         }
         guard isControllableExternal else {
+            keyLog.debug("brightness key: cursor display \(displayID) is built-in — passing through")
             return Unmanaged.passRetained(event)
         }
+
+        keyLog.info("brightness key: adjusting external display \(displayID, privacy: .public) up=\(up, privacy: .public)")
 
         // All data captured here is Sendable (CGDirectDisplayID = UInt32, Double).
         Task { @MainActor in
             let displays = DisplayManagerAccessor.shared.displays
             guard let display = displays.first(where: { $0.displayID == displayID }) else { return }
-            let newBrightness = max(0.0, min(display.maxBrightness, display.brightness + step))
+            let newBrightness = Self.nextBrightness(for: display, up: up)
             // Use smooth animation, cancels any in-progress animation automatically.
             BrightnessService.shared.setBrightnessSmooth(newBrightness, for: display)
 
@@ -409,15 +442,15 @@ final class BrightnessKeyService: @unchecked Sendable {
         return nil
     }
 
-    /// Applies the same relative step to each given display (built-in or external),
+    /// Applies one perceptual step to each given display (built-in or external),
     /// through BrightnessService's smooth fade (reusing its DDC/gamma/IOKit paths +
     /// coalescing), and shows the brightness HUD on each display's own screen.
     /// Backs the `.allDisplays` and `.selected` brightness-key modes.
     @MainActor
-    private func adjustDisplays(_ displays: [DisplayInfo], step: Double) {
+    private func adjustDisplays(_ displays: [DisplayInfo], up: Bool) {
         let screens = NSScreen.screens
         for display in displays {
-            let newBrightness = max(0.0, min(display.maxBrightness, display.brightness + step))
+            let newBrightness = Self.nextBrightness(for: display, up: up)
             BrightnessService.shared.setBrightnessSmooth(newBrightness, for: display)
             if let screen = screens.first(where: {
                 ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == display.displayID

@@ -53,6 +53,7 @@ targets:
       - path: Crisp/Models/DDCServiceMatcher.swift
       - path: Crisp/Models/RefreshRateFormat.swift
       - path: Crisp/Models/GammaPersistenceKey.swift
+      - path: Crisp/Models/BrightnessCurve.swift
       - path: Crisp/Models/VariableRefreshModes.swift
     settings:
       base:
@@ -62,6 +63,22 @@ targets:
         SWIFT_STRICT_CONCURRENCY: minimal
         TEST_HOST: ""
         BUNDLE_LOADER: ""
+
+  crispctl:
+    type: tool
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: crispctl
+      - path: Crisp/Services/DDCService.swift
+      - path: Crisp/Models/DDCServiceMatcher.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.crisp.cli
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: minimal
+        SWIFT_OBJC_BRIDGING_HEADER: Crisp/Crisp-Bridging-Header.h
+        GENERATE_INFOPLIST_FILE: YES
 
 schemes:
   Crisp:

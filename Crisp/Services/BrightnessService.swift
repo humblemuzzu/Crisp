@@ -309,6 +309,15 @@ final class BrightnessService: @unchecked Sendable {
                 return
             }
 
+            // Inside the gamma blend region the hardware is pinned at gammaBlendThreshold
+            // and gamma carries everything below it, so a DDC read reports the floor, not
+            // what the user actually sees. Adopting it would snap the slider up to 15 % on
+            // the next refresh (and then a write would push the real backlight there too).
+            // Crisp owns the value while a software dim is engaged.
+            if let factor = currentSoftwareBrightness(for: displayID), factor < 1.0 {
+                return
+            }
+
             DDCService.shared.readAsync(
                 displayID: displayID,
                 command: DDCService.brightnessVCP
@@ -483,8 +492,16 @@ final class BrightnessService: @unchecked Sendable {
             }
             return
         }
+        // In the blend region the hardware is PINNED at the threshold and gamma dims
+        // below it. Sending `percent` to both dimmers instead multiplies them, making
+        // emitted light quadratic (~percent^2 / threshold) rather than linear: from 7.6 %
+        // a single 6.25-point key step then raised actual light 3.3x, and a step down
+        // dropped it 30x to near black. Pinning makes the product linear again, because
+        // threshold * (percent / threshold) == percent, while still reaching true dark.
+        let hardwarePercent = max(percent, gammaBlendThreshold)
+
         ddcPumpLock.lock()
-        pendingDDCPercent[displayID] = percent
+        pendingDDCPercent[displayID] = hardwarePercent
         let alreadyPumping = ddcPumpActive.contains(displayID)
         if !alreadyPumping { ddcPumpActive.insert(displayID) }
         ddcPumpLock.unlock()
