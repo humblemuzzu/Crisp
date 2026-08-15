@@ -3,7 +3,9 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    # main is upstream's trunk; benq-ddc is this fork's work branch (AGENTS.md §1),
+    # so pushes there get the same gate rather than only being checked at PR time.
+    branches: [main, benq-ddc]
 
 permissions:
   contents: read
@@ -26,6 +28,14 @@ jobs:
             echo "::error::Don't change MARKETING_VERSION in project.yml — the maintainer bumps the version at release."
             exit 1
           fi
+      # AGENTS.md §3's hard rules, machine-checked: no private framework
+      # (CoreBrightness/CoreDisplay/SkyLight/DisplayServices/OSDUIHelper/…) may
+      # enter the DDC path, and Crisp/Models must stay headless. §2 explains why
+      # that first rule is the reason this fork exists: those APIs took
+      # WindowServer down seven times on macOS 26. Pure text analysis — it needs
+      # no toolchain, so it runs first and fails in seconds.
+      - name: Architecture boundaries (AGENTS.md §3)
+        run: make boundaries
       # Lint, enforcing: the baseline is clean, so any violation (warning or
       # error) fails via --strict. Run locally with `swiftlint lint --strict`;
       # without full Xcode, SWIFTLINT_DISABLE_SOURCEKIT=1 skips the
@@ -37,6 +47,23 @@ jobs:
         run: HOMEBREW_NO_AUTO_UPDATE=1 brew install swiftlint xcodegen
       - name: Lint (SwiftLint)
         run: swiftlint lint --strict --reporter github-actions-logging
+      # The zero-warning baseline (AGENTS.md §3.5) as an explicit build, rather
+      # than a side effect of whatever xcodebuild happens to compile during the
+      # test run. STRICT=1 is -warnings-as-errors. This is also the Command Line
+      # Tools path the release script uses, so a break here is a break in the
+      # thing that actually ships.
+      - name: Build app (warnings as errors)
+        run: make compile STRICT=1
+      # crispctl links the app's whole DDC stack, so this compiles DDCService,
+      # IOKitDDCTransport and the DDC models a second time on their own — a seam
+      # violation (a DDC file reaching into AppKit-only code) fails here even if
+      # the app target still builds.
+      #
+      # Only the build is verified: `crispctl list/get/set` needs a real monitor
+      # on a real DDC/CI link, which no hosted runner has. Those are run by hand
+      # against the BenQ MA320U (AGENTS.md §5).
+      - name: Build crispctl (warnings as errors)
+        run: make crispctl STRICT=1
       # Unit tests. Run locally with `make test` (needs full Xcode; the app
       # itself builds with just the Command Line Tools). CI is the enforced
       # gate: the suite was once never executed anywhere, which is how the

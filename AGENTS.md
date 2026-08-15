@@ -101,6 +101,14 @@ never exercised by the features we use. The two full-repo audits are in
 
 These are not style preferences; they are the reason this repo exists.
 
+Rules 1, 2 and 5 are **machine-enforced**, so they no longer depend on anyone
+remembering them: `make boundaries` (`scripts/check-boundaries.sh`) fails on a
+private framework entering the DDC path or an AppKit/SwiftUI import in
+`Crisp/Models`, and `make compile STRICT=1` fails on any warning. CI runs both
+on every push and pull request. Rules 3 and 4 remain review-enforced: they are
+behavioural, and the unit suite (`make test`) covers the parts that can be
+tested headlessly.
+
 1. **The DDC path never touches private frameworks.** No `SkyLight`,
    `CoreBrightness`, `CoreDisplay`, `DisplayServices`, `OSD`, `BezelServices`,
    `IOMobileFramebuffer` calls in `DDCService`, `DDCFeatureService`,
@@ -110,11 +118,18 @@ These are not style preferences; they are the reason this repo exists.
    not WindowServer (same as MonitorControl ships). If a future macOS drops
    those symbols, the failure mode must be "feature silently absent", never a
    WindowServer crash.
+   *Enforced by* `scripts/check-boundaries.sh private-frameworks`. It polices
+   the DDC files with zero tolerance and `BrightnessService.swift` with a scoped
+   rule (its built-in-panel branch legitimately dlopens DisplayServices; the
+   external branch must not, and may not call that bridge). The script's header
+   lists every policed path and every exception.
 2. **Never extend upstream's private-API features.** They exist (physical
    display toggle via `SLSConfigureDisplayEnabled`, CGS mode switching with a
    documented macOS 26 `checkCapacity()` segfault hazard, MonitorPanel HDR,
    OSDUIHelper HUD). They are gated and dlopen'd; leave them that way. Do not
-   build new features on them.
+   build new features on them. The gate above stops them leaking into the DDC
+   path; the services that already own them are deliberately not policed, since
+   the point is to freeze them, not to break them.
 3. **Persistence keys on `displayUUID`, never `CGDirectDisplayID`.** macOS
    reassigns display IDs across reconnects (issue #32 in upstream); UUID-keyed
    state is the only safe persistence.
@@ -123,7 +138,16 @@ These are not style preferences; they are the reason this repo exists.
    quarantine wedged reads and drop channels on reconfiguration; keep that
    discipline.
 5. **Zero-warning builds.** CI runs `SWIFT_TREAT_WARNINGS_AS_ERRORS`; keep
-   `make compile` output clean.
+   `SWIFT_TREAT_WARNINGS_AS_ERRORS` (tests) and `make compile STRICT=1` /
+   `make crispctl STRICT=1` (`-warnings-as-errors`); keep `make compile` output
+   clean.
+6. **`Crisp/Models/` stays headless.** No AppKit, Cocoa or SwiftUI imports:
+   the models compile into the `CrispTests` target, which is what lets DDC
+   framing, the brightness ladder and quirks parsing be tested without owning
+   the monitor. CoreGraphics and IOKit are fine (`CGDirectDisplayID` is hardware
+   identity, not UI). One allowlisted exception, `DisplayInfo.swift`, which
+   needs `NSScreen.localizedName` and is correspondingly not in the test target.
+   *Enforced by* `scripts/check-boundaries.sh model-purity`.
 
 ---
 
@@ -141,6 +165,8 @@ These are not style preferences; they are the reason this repo exists.
 | Sliders / input menu | `Crisp/Views/BrightnessSliderView.swift`, `Crisp/Views/VolumeSliderView.swift`, `Crisp/Views/DDCFeatureViews.swift`, `Crisp/Views/PanelBlocks.swift` |
 | CLI | `crispctl/main.swift` (shares DDCService + DDCServiceMatcher) |
 | Packaging | `scripts/make-app.sh` |
+| Architecture gates (§3.1, §3.6) | `scripts/check-boundaries.sh` |
+| Test runner (preflight + suite) | `scripts/run-tests.sh`, target list in `project.yml` |
 
 ---
 
@@ -148,10 +174,18 @@ These are not style preferences; they are the reason this repo exists.
 
 ```sh
 make compile          # app binary only (./Crisp-bin), zero-warning check
-make crispctl         # CLI binary (./crispctl-bin)
+                      #   STRICT=1 adds -warnings-as-errors (what CI builds with)
+make crispctl         # CLI binary (./crispctl-bin), same STRICT=1 knob
+make boundaries       # §3's architecture gates; no Xcode, no display, ~1s
 ./scripts/make-app.sh # full rebuild -> /Applications/Crisp.app, stable-sign, relaunch
 make test             # xcodegen + xcodebuild unit tests (needs Xcode + xcodegen)
+make check            # everything CI enforces: lint + boundaries + tests + i18n keys
 ```
+
+`make test` preflights its prerequisites (full Xcode, `brew install xcodegen`)
+and prints a per-suite pass/fail table; the full log lands in `build/test.log`.
+The suite is headless by construction (`TEST_HOST`/`BUNDLE_LOADER` are empty in
+`project.yml`), so it launches nothing and needs no monitor attached.
 
 **Signing is important.** The app must be signed with a *stable* identity
 (your Apple Development certificate, or a self-signed "Crisp Dev" cert) so the

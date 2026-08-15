@@ -90,6 +90,16 @@ open Crisp.xcodeproj
 
 For a distributable DMG (Command Line Tools only, no full Xcode) and the fast edit-compile-run dev loop, see [docs/BUILDING.md](docs/BUILDING.md).
 
+Before opening a PR, run what CI runs:
+
+```sh
+make boundaries   # architecture gates: seconds, no Xcode needed
+make test         # the unit suite (needs full Xcode + xcodegen)
+make check        # lint + boundaries + tests + localization keys
+```
+
+`make boundaries` enforces the two structural rules the codebase depends on: no private display frameworks in the DDC path, and no AppKit/SwiftUI in `Crisp/Models` (which has to stay headless to be testable). It explains any violation it finds, including why the rule exists.
+
 ## Contributing
 
 Issues and pull requests are welcome. Found a bug, want a feature, or have a display Crisp doesn't handle well? [Open an issue](https://github.com/didriksg/Crisp/issues) or start a [discussion](https://github.com/didriksg/Crisp/discussions). PRs are just as welcome, whether it's a fix, a feature, or a new translation.

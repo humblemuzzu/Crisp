@@ -3,8 +3,11 @@
 # Fast dev loop (Command Line Tools only, no Xcode):
 #   make dev        compile, swap the binary into /Applications/Crisp.app, relaunch
 #   make compile    compile the binary only (./Crisp-bin), no swap — quick build check
+#                   (STRICT=1 adds -warnings-as-errors, which is what CI builds with)
 #   make test       generate the Xcode project and run unit tests
-#   make check      lint + tests + localization keys, everything CI enforces: run before pushing
+#   make boundaries architecture gates: AGENTS.md §3 as a build failure (no Xcode needed)
+#   make check      lint + boundaries + tests + localization keys, everything CI enforces:
+#                   run before pushing
 #                   (auto-run on every push after: git config core.hooksPath .githooks)
 #
 # Distributable DMG:
@@ -35,6 +38,13 @@ SWIFTC_FLAGS := -O -swift-version 5 -strict-concurrency=minimal -parse-as-librar
                 -framework AppKit -framework SwiftUI -framework IOKit -framework CoreAudio \
                 -Xlinker -undefined -Xlinker dynamic_lookup
 
+# The zero-warning baseline (AGENTS.md §3.5) is only real if something enforces
+# it. CI builds with STRICT=1; local builds stay permissive so a mid-iteration
+# warning doesn't block the edit-compile-run loop.
+ifeq ($(STRICT),1)
+SWIFTC_STRICT_FLAGS := -warnings-as-errors
+endif
+
 # crispctl shares the app's whole DDC stack (same IOKit DDC path, no private
 # frameworks): DDCService on top of the DDCTransport seam (DDCPacket framing,
 # DDCProtocolEngine retry/quarantine, IOKitDDCTransport I2C, DDCServiceMatcher
@@ -48,14 +58,16 @@ CRISPCTL_FLAGS := -O -swift-version 5 -strict-concurrency=minimal -parse-as-libr
                   -framework IOKit -framework CoreGraphics
 
 .DEFAULT_GOAL := help
-.PHONY: help dev compile crispctl test lint loc-check check build dmg release clean
+.PHONY: help dev compile crispctl strict-build test boundaries lint loc-check check build dmg release clean
 
 help:
 	@echo "Crisp — make targets:"
 	@echo "  make dev        compile + swap into /Applications/Crisp.app + relaunch (dev.sh)"
 	@echo "  make compile    compile ./Crisp-bin only, no swap (quick build check)"
+	@echo "  make crispctl   compile ./crispctl-bin, the DDC CLI"
 	@echo "  make test       generate the Xcode project and run unit tests"
-	@echo "  make check      lint + tests + localization keys, everything CI enforces"
+	@echo "  make boundaries architecture gates (AGENTS.md §3), no Xcode needed"
+	@echo "  make check      lint + boundaries + tests + localization keys, everything CI enforces"
 	@echo "  make build      signed universal DMG, no Xcode (scripts/release.sh v$(VERSION))"
 	@echo "  make dmg        DMG via Xcode (scripts/build-dmg.sh)"
 	@echo "  make release ARGS=\"vX.Y.Z notes.md --publish\"   full release (scripts/release.sh)"
@@ -66,23 +78,30 @@ dev:
 
 compile:
 	@echo "==> Compiling Crisp $(VERSION) -> ./Crisp-bin"
-	swiftc $(SWIFTC_FLAGS) $(SWIFT_SOURCES) -o Crisp-bin
+	swiftc $(SWIFTC_FLAGS) $(SWIFTC_STRICT_FLAGS) $(SWIFT_SOURCES) -o Crisp-bin
 	@echo "Done. ./Crisp-bin built (not swapped into the app; use 'make dev' for that)."
 
 crispctl:
 	@echo "==> Compiling crispctl -> ./crispctl-bin"
-	swiftc $(CRISPCTL_FLAGS) $(CRISPCTL_SOURCES) -o crispctl-bin
+	swiftc $(CRISPCTL_FLAGS) $(SWIFTC_STRICT_FLAGS) $(CRISPCTL_SOURCES) -o crispctl-bin
 	@echo "Done. ./crispctl-bin built. Try: ./crispctl-bin list"
 
-# Warnings are errors here (the baseline is zero, issue #47), so a PR that
-# introduces one fails make check and CI. `make compile` stays permissive for
-# mid-iteration builds.
+# Preflight (Xcode + xcodegen), xcodegen generate, xcodebuild test, and a
+# per-suite pass/fail table — a green run now says how many tests ran.
 test:
-	xcodegen generate
-	xcodebuild -quiet test -project Crisp.xcodeproj -scheme Crisp \
-		-destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO \
-		SWIFT_VERSION=5 SWIFT_STRICT_CONCURRENCY=minimal \
-		SWIFT_TREAT_WARNINGS_AS_ERRORS=YES
+	./scripts/run-tests.sh
+
+# AGENTS.md §3's hard rules, machine-checked: no private frameworks in the DDC
+# path, no AppKit/SwiftUI in Crisp/Models. Pure text analysis, so it needs
+# neither Xcode nor a display and runs in under a second.
+boundaries:
+	./scripts/check-boundaries.sh
+
+# The zero-warning baseline exactly as CI builds it: both binaries, warnings as
+# errors. Separate from `compile` so the plain target stays permissive.
+strict-build:
+	$(MAKE) compile STRICT=1
+	$(MAKE) crispctl STRICT=1
 
 lint:
 	@command -v swiftlint >/dev/null || { echo "SwiftLint not installed: brew install swiftlint"; exit 1; }
@@ -98,9 +117,11 @@ loc-check:
 	python3 scripts/check-localization-keys.py build/loc/en.xcloc \
 		Crisp/Resources/Localizable.xcstrings scripts/i18n-missing-allowlist.txt
 
-# Everything CI enforces (lint + build + tests + localization keys), locally.
-check: lint test loc-check
-	@echo "check passed: lint clean, tests green, localization keys complete"
+# Everything CI enforces (lint + boundaries + build + tests + localization keys),
+# locally. Boundaries run first: they are the cheapest and the most likely to be
+# what an unfamiliar contributor trips over.
+check: lint boundaries strict-build test loc-check
+	@echo "check passed: lint clean, boundaries held, zero warnings, tests green, localization keys complete"
 
 build:
 	./scripts/release.sh v$(VERSION)

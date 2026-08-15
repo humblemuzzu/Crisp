@@ -33,14 +33,26 @@ This is the fast dev loop: edit, compile, swap, relaunch, no Xcode involved.
 
 ## Before opening a PR
 
-Run `make check`: it runs SwiftLint (strict), the unit tests, and the
-localization key check, the same checks CI enforces, so failures surface
-locally instead of on the PR. It needs full Xcode plus `swiftlint` and
+Run `make check`: it runs SwiftLint (strict), the architecture gates, the unit
+tests, and the localization key check, the same checks CI enforces, so failures
+surface locally instead of on the PR. It needs full Xcode plus `swiftlint` and
 `xcodegen` (`brew install swiftlint xcodegen`). To run it automatically on
 every push, opt in once:
 
 ```sh
 git config core.hooksPath .githooks
 ```
+
+The two pieces of `make check` worth knowing on their own:
+
+- `make boundaries` (`scripts/check-boundaries.sh`) enforces the architecture
+  rules in [AGENTS.md](../AGENTS.md) §3 — private display frameworks stay out of
+  the DDC path, and `Crisp/Models` stays headless. It is pure text analysis: no
+  Xcode, no display, under a second. Its header documents exactly which files
+  are policed and why each exception is one.
+- `make test` (`scripts/run-tests.sh`) generates the Xcode project and runs the
+  headless unit suite, printing a per-suite pass/fail table. Nothing launches
+  the app or needs a monitor attached; the checks that do need real hardware are
+  `crispctl` commands, run by hand.
 
 The app icon is generated from vector code: `scripts/generate-icon.swift`.
