@@ -151,6 +151,36 @@ targets:
       # to show, what each attached display means, the no-monitor case. Foundation
       # only; the window and its prose live in Crisp/Views/OnboardingView.swift.
       - path: Crisp/Models/OnboardingPlan.swift
+      # Smart TVs. A television has no DDC/CI, so the whole feature is protocol
+      # work over a network — and there is no TV on the machine this is developed
+      # on, which makes headless tests the only way any of it can be known to
+      # work rather than merely believed to. All five files are pure text in,
+      # values out, sitting above the `TVTransport` seam exactly as DDCPacket /
+      # DDCProtocolEngine sit above DDCTransport.
+      #
+      # Which features exist per platform and what each costs to get wrong —
+      # including the fact that Tizen has no remote brightness command at all
+      # (TVDeviceTests asserts it over the whole registry).
+      - path: Crisp/Models/TVDevice.swift
+      # The wire seam and its timeouts. In the test target so `FakeTVTransport`
+      # can conform to it.
+      - path: Crisp/Models/TVTransport.swift
+      # Trust-on-first-use for the self-signed certificates both platforms use
+      # (TVTrustTests): first sight pins, a mismatch refuses and is never
+      # silently re-pinned. Pure, so the mismatch is a unit test rather than
+      # something you would have to stage a man-in-the-middle to reach.
+      - path: Crisp/Models/TVTrust.swift
+      # LG's SSAP: envelope, id correlation, the pairing state machine, and the
+      # createAlert round trip that is the only working way to write a modern
+      # webOS backlight (WebOSProtocolTests).
+      - path: Crisp/Models/WebOSProtocol.swift
+      # Samsung's remote protocol: detection, the two token locations, the key
+      # frames and the one-key-per-second pacing (TizenProtocolTests).
+      - path: Crisp/Models/TizenProtocol.swift
+      # What automation may ask a TV for, and the destructive rule for power and
+      # input (TVActionTests). Asserted over the whole TV registry, exactly as
+      # AutomationRequestTests is over the VCP one.
+      - path: Crisp/Models/TVAction.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.crisp.tests
@@ -186,6 +216,24 @@ targets:
       - path: Crisp/Models/DisplayGroup.swift
       - path: Crisp/Models/DDCPreset.swift
       - path: Crisp/Models/PresetSchedule.swift
+      # `crispctl tv` drives the same televisions the app pairs, through the same
+      # conversation (`TVConversation`) and the same Keychain items — a second
+      # implementation would be wrong in one of the two within a release. What it
+      # deliberately does NOT link is `DDCFeatureDiscovery`/`TVAction`: the app's
+      # write gate needs a `DestructiveWriteConsent`, the only two things that
+      # mint one are a SwiftUI alert and an NSAlert, and declaring a third
+      # conformer for a command line is the escape hatch AGENTS.md warns about.
+      # The CLI reproduces the part that protects the user instead — the hazard
+      # and a deliberate second step (`confirmDestructiveTV`), exactly as it
+      # already does for destructive VCP codes.
+      - path: Crisp/Models/TVDevice.swift
+      - path: Crisp/Models/TVTransport.swift
+      - path: Crisp/Models/TVTrust.swift
+      - path: Crisp/Models/WebOSProtocol.swift
+      - path: Crisp/Models/TizenProtocol.swift
+      - path: Crisp/Services/TVConversation.swift
+      - path: Crisp/Services/TVWebSocketTransport.swift
+      - path: Crisp/Services/TVCredentialStore.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.crisp.cli

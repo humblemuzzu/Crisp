@@ -51,6 +51,18 @@ struct DisplayState: Codable, Equatable, Sendable {
     /// died with an unconfirmed input code on the panel — see
     /// `InputCalibrationRecovery`.
     var pendingInputCalibration: PendingInputCalibration?
+    /// The paired smart TV this display *is*, when the user has said so.
+    ///
+    /// A television plugged into the Mac is two things at once: a `CGDirectDisplay`
+    /// with no DDC channel, and a device on the LAN with a control protocol. Only
+    /// the user can join them up — nothing in either identity space names the
+    /// other — so this is a binding they make once, in the panel, and it is what
+    /// promotes the display's brightness ladder from gamma to `.tvNetwork`.
+    ///
+    /// Absent for every desk with no TV on it, which is the point: a `nil` here
+    /// means `BrightnessRung.resolve` sees `tvBacklightReachable: nil` and takes
+    /// exactly the branches it always did.
+    var tvDevice: TVDeviceID?
     /// Fields a *newer* build wrote for this display and this one does not model,
     /// kept verbatim so a rollback does not delete them. Same mechanism and same
     /// argument as the document's own bag — this is the level a new per-display
@@ -63,7 +75,7 @@ struct DisplayState: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey, CaseIterable {
         case brightness, contrast, volume, input, reapplyInputOnReconnect
         case softwareBrightnessFactor, volumeCapable, brightnessKeySelected
-        case calibratedInputs, pendingInputCalibration
+        case calibratedInputs, pendingInputCalibration, tvDevice
     }
 
     private static let knownFields = Set(CodingKeys.allCases.map(\.rawValue))
@@ -79,6 +91,7 @@ struct DisplayState: Codable, Equatable, Sendable {
         brightnessKeySelected: Bool? = nil,
         calibratedInputs: [CalibratedInput]? = nil,
         pendingInputCalibration: PendingInputCalibration? = nil,
+        tvDevice: TVDeviceID? = nil,
         unknown: [String: JSONValue] = [:]
     ) {
         self.brightness = brightness
@@ -91,6 +104,7 @@ struct DisplayState: Codable, Equatable, Sendable {
         self.brightnessKeySelected = brightnessKeySelected
         self.calibratedInputs = calibratedInputs
         self.pendingInputCalibration = pendingInputCalibration
+        self.tvDevice = tvDevice
         self.unknown = unknown
     }
 
@@ -111,6 +125,7 @@ struct DisplayState: Codable, Equatable, Sendable {
         self.pendingInputCalibration = try container.decodeIfPresent(
             PendingInputCalibration.self, forKey: .pendingInputCalibration
         )
+        self.tvDevice = try container.decodeIfPresent(TVDeviceID.self, forKey: .tvDevice)
         self.unknown = ForwardCompatibleFields.decode(from: decoder, known: Self.knownFields)
     }
 
@@ -126,6 +141,7 @@ struct DisplayState: Codable, Equatable, Sendable {
         try container.encodeIfPresent(brightnessKeySelected, forKey: .brightnessKeySelected)
         try container.encodeIfPresent(calibratedInputs, forKey: .calibratedInputs)
         try container.encodeIfPresent(pendingInputCalibration, forKey: .pendingInputCalibration)
+        try container.encodeIfPresent(tvDevice, forKey: .tvDevice)
         try ForwardCompatibleFields.encode(unknown, to: encoder, known: Self.knownFields)
     }
 
@@ -175,22 +191,31 @@ struct PendingInputCalibration: Codable, Equatable, Sendable {
 
 /// The whole file:
 /// ```
-/// { "version": 3,
+/// { "version": 4,
 ///   "displays":  { "<uuid>": { … } },
 ///   "groups":    [ { "id": …, "name": "Desk", "members": […], "syncMode": "relative" } ],
 ///   "presets":   [ { "id": …, "name": "Night", "settings": { "<uuid>": { … } } } ],
-///   "schedules": [ { "id": …, "presetID": …, "trigger": { "at": "22:00" } } ] }
+///   "schedules": [ { "id": …, "presetID": …, "trigger": { "at": "22:00" } } ],
+///   "tvDevices": [ { "id": "uuid:…", "platform": "webOS", "name": "Living room",
+///                    "host": "192.168.1.40" } ] }
 /// ```
 ///
-/// The three list-shaped members arrived together in v3 and share one property
-/// that the scalar `displays` map does not need: they are **decoded
-/// element-wise** (`LossyList`). One malformed schedule must not cost the user
-/// their monitor's brightness, which is what failing the whole document would
-/// do — the store quarantines a document it cannot read.
+/// The four list-shaped members share one property that the scalar `displays`
+/// map does not need: they are **decoded element-wise** (`LossyList`). One
+/// malformed schedule must not cost the user their monitor's brightness, which
+/// is what failing the whole document would do — the store quarantines a
+/// document it cannot read.
+///
+/// Note what is *not* in `tvDevices`: the webOS client key, the Tizen token and
+/// the pinned certificate fingerprint. Those are credentials and live in the
+/// Keychain (`TVCredentialStore`). `TVDevice` has no field to put one in, so it
+/// is not a rule anybody has to remember — this file physically cannot carry a
+/// secret into a document users are encouraged to paste into bug reports.
 struct DisplayStateDocument: Codable, Equatable, Sendable {
     /// v1 was the flat `UserDefaults` layout this replaces; v2 was this document
-    /// with `displays` alone; v3 adds groups, presets and schedules.
-    static let currentVersion = 3
+    /// with `displays` alone; v3 added groups, presets and schedules; v4 adds
+    /// paired smart TVs.
+    static let currentVersion = 4
 
     var version: Int
     var displays: [DisplayUUID: DisplayState]
@@ -200,6 +225,8 @@ struct DisplayStateDocument: Codable, Equatable, Sendable {
     var presets: [DDCPreset]
     /// Time-triggered preset applications (`PresetSchedule`).
     var schedules: [PresetSchedule]
+    /// Smart TVs the user paired (`TVDevice`). Public facts only — see the type.
+    var tvDevices: [TVDevice]
     /// Top-level fields a *newer* build wrote and this one does not model, kept
     /// verbatim so a rollback is lossless. See `JSONValue`'s header.
     var unknown: [String: JSONValue]
@@ -209,7 +236,7 @@ struct DisplayStateDocument: Codable, Equatable, Sendable {
     /// what lets `knownFields` below be derived from the same list instead of
     /// being a second copy that can fall behind.
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case version, displays, groups, presets, schedules
+        case version, displays, groups, presets, schedules, tvDevices
     }
 
     private static let knownFields = Set(CodingKeys.allCases.map(\.rawValue))
@@ -220,6 +247,7 @@ struct DisplayStateDocument: Codable, Equatable, Sendable {
         groups: [DisplayGroup] = [],
         presets: [DDCPreset] = [],
         schedules: [PresetSchedule] = [],
+        tvDevices: [TVDevice] = [],
         unknown: [String: JSONValue] = [:]
     ) {
         self.version = version
@@ -227,6 +255,7 @@ struct DisplayStateDocument: Codable, Equatable, Sendable {
         self.groups = groups
         self.presets = presets
         self.schedules = schedules
+        self.tvDevices = tvDevices
         self.unknown = unknown
     }
 
@@ -246,6 +275,7 @@ struct DisplayStateDocument: Codable, Equatable, Sendable {
         self.groups = Self.list(DisplayGroup.self, from: container, forKey: .groups)
         self.presets = Self.list(DDCPreset.self, from: container, forKey: .presets)
         self.schedules = Self.list(PresetSchedule.self, from: container, forKey: .schedules)
+        self.tvDevices = Self.list(TVDevice.self, from: container, forKey: .tvDevices)
         self.unknown = ForwardCompatibleFields.decode(from: decoder, known: Self.knownFields)
     }
 
@@ -259,6 +289,7 @@ struct DisplayStateDocument: Codable, Equatable, Sendable {
         if !groups.isEmpty { try container.encode(groups, forKey: .groups) }
         if !presets.isEmpty { try container.encode(presets, forKey: .presets) }
         if !schedules.isEmpty { try container.encode(schedules, forKey: .schedules) }
+        if !tvDevices.isEmpty { try container.encode(tvDevices, forKey: .tvDevices) }
         try ForwardCompatibleFields.encode(unknown, to: encoder, known: Self.knownFields)
     }
 
@@ -413,28 +444,32 @@ enum DisplayStateMigration {
         target = value
     }
 
-    // MARK: - v2 → v3
+    // MARK: - v2 → v3 → v4
 
-    /// Brings any decoded document up to v3. Pure, idempotent, total.
+    /// Brings any decoded document up to the current version. Pure, idempotent,
+    /// total.
     ///
-    /// v3 added three list-shaped members (`groups`, `presets`, `schedules`), and
-    /// unlike v1 → v2 there is nothing to *convert*: no earlier version stored
-    /// anything they could be derived from, so an upgraded v2 document has three
-    /// empty lists and every other field exactly as it was. What this function is
-    /// actually for is the two things a version bump has to guarantee anyway:
+    /// v3 added three list-shaped members (`groups`, `presets`, `schedules`) and
+    /// v4 added a fourth (`tvDevices`). Unlike v1 → v2 there is nothing to
+    /// *convert* at either step: no earlier version stored anything they could be
+    /// derived from, so an upgraded v2 document has four empty lists and every
+    /// other field exactly as it was. What this function is actually for is the
+    /// two things a version bump has to guarantee anyway:
     ///
-    ///   1. **Nothing is dropped.** Every v2 field and every field a newer build
-    ///      parked in `unknown` survives, and `version` is only ever *raised* —
-    ///      a v4 document read here keeps its 4, because a document carrying v4
-    ///      fields must not go back to disk claiming to be v3.
+    ///   1. **Nothing is dropped.** Every older field and every field a newer
+    ///      build parked in `unknown` survives, and `version` is only ever
+    ///      *raised* — a v5 document read here keeps its 5, because a document
+    ///      carrying v5 fields must not go back to disk claiming to be v4.
     ///   2. **The invariants the new members rely on hold**, whatever a hand
     ///      edit or a half-finished write left behind: identifiers are unique
-    ///      (two groups sharing an id makes every lookup ambiguous) and a group
+    ///      (two groups sharing an id makes every lookup ambiguous), a group
     ///      lists no display twice (which would double-write one monitor and
-    ///      make its offset undefined).
+    ///      make its offset undefined), and no two TV records claim the same
+    ///      device (which would make "which credential is this TV's?" ambiguous
+    ///      in the Keychain).
     ///
     /// Run on every load rather than behind a one-shot sentinel, because it is
-    /// idempotent and costs a pass over three short lists — and because a
+    /// idempotent and costs a pass over four short lists — and because a
     /// sentinel is a second thing that can be wrong.
     static func upgraded(_ document: DisplayStateDocument) -> DisplayStateDocument {
         var result = document
@@ -442,6 +477,7 @@ enum DisplayStateMigration {
         result.groups = deduplicated(document.groups.map { $0.normalized() })
         result.presets = deduplicated(document.presets.map { $0.normalized() })
         result.schedules = deduplicated(document.schedules)
+        result.tvDevices = deduplicatedTVs(document.tvDevices.map { $0.normalized() })
         return result
     }
 
@@ -449,6 +485,14 @@ enum DisplayStateMigration {
     /// across runs: an arbitrary winner would rewrite the file on every launch.
     private static func deduplicated<T: Identifiable>(_ items: [T]) -> [T] where T.ID == String {
         var seen: Set<String> = []
+        return items.filter { seen.insert($0.id).inserted }
+    }
+
+    /// The same rule for `TVDevice`, whose `id` is a `TVDeviceID` rather than a
+    /// `String`. A second function rather than a looser generic constraint,
+    /// because loosening it would also admit types whose ids are not identities.
+    private static func deduplicatedTVs(_ items: [TVDevice]) -> [TVDevice] {
+        var seen: Set<TVDeviceID> = []
         return items.filter { seen.insert($0.id).inserted }
     }
 

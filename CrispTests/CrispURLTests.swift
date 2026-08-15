@@ -300,4 +300,85 @@ final class CrispURLTests: XCTestCase {
             return XCTFail("an over-long preset identifier should be ignored")
         }
     }
+
+    // MARK: - crisp://tv/<device-id>/<feature>
+
+    /// A well-formed TV link parses to a request, with the device identity and
+    /// the origin carried through.
+    /// Kills mutation: routing a TV URL through the display grammar (whose
+    /// features are VCP names), or lowercasing the device identifier — a TV's id
+    /// is a `uuid:` string the device chose and a link would then match nothing.
+    func testAWellFormedTVURLProducesATVAction() {
+        guard case .tvAction(let request) = command("crisp://tv/uuid:AbC-123/volume?value=35") else {
+            return XCTFail("crisp://tv/<id>/<feature> should be a TV action")
+        }
+        XCTAssertEqual(request.device, TVDeviceID("uuid:AbC-123"))
+        XCTAssertEqual(request.feature, .volume)
+        XCTAssertEqual(request.value, .percent(35))
+        XCTAssertEqual(request.origin, .url)
+    }
+
+    /// A flag-shaped feature takes on/off, and only the three spellings.
+    /// Kills mutation: accepting anything non-empty as true, which would make
+    /// `?value=please` turn a television off.
+    func testFlagFeaturesAcceptOnlyTheThreeSpellings() {
+        for (text, expected) in [("off", false), ("false", false), ("0", false),
+                                 ("on", true), ("true", true), ("1", true)] {
+            guard case .tvAction(let request) = command("crisp://tv/uuid:1/mute?value=\(text)") else {
+                return XCTFail("'\(text)' should parse as a flag")
+            }
+            XCTAssertEqual(request.value, .flag(expected))
+        }
+        for text in ["yes", "y", "maybe", "2", ""] {
+            guard case .ignored = command("crisp://tv/uuid:1/mute?value=\(text)") else {
+                return XCTFail("'\(text)' should not parse as a flag")
+            }
+        }
+    }
+
+    /// Rule 2 applies to the TV grammar too: an unknown parameter refuses the
+    /// whole URL rather than being quietly discarded.
+    /// Kills mutation: ignoring extra query items, which is one pull request away
+    /// from tolerating `?confirmed=true` on the one action that must always ask.
+    func testAnUnknownParameterRefusesTheWholeTVURL() {
+        for url in [
+            "crisp://tv/uuid:1/power?value=off&confirmed=true",
+            "crisp://tv/uuid:1/power?confirmed=true",
+            "crisp://tv/uuid:1/power"
+        ] {
+            guard case .ignored = command(url) else {
+                return XCTFail("\(url) should be ignored")
+            }
+        }
+    }
+
+    /// A malformed TV URL is a quiet no-op, never a partial action.
+    /// Kills mutation: defaulting a missing feature or device to something.
+    func testMalformedTVURLsAreIgnored() {
+        let long = String(repeating: "A", count: CrispURL.maximumIdentifierLength + 1)
+        for url in [
+            "crisp://tv", "crisp://tv/uuid:1", "crisp://tv/uuid:1/volume/extra?value=1",
+            "crisp://tv//volume?value=1", "crisp://tv/uuid:1/nosuchfeature?value=1",
+            "crisp://tv/\(long)/volume?value=1", "crisp://tv/uuid:1/volume?value=abc"
+        ] {
+            guard case .ignored = command(url) else {
+                return XCTFail("\(url) should be ignored")
+            }
+        }
+    }
+
+    /// The TV grammar cannot express consent, so a destructive action still has
+    /// to go through the plan — which can only answer `needsConfirmation`.
+    /// Kills mutation: any future shortcut in the parser that marks a URL as
+    /// pre-approved. This asserts the two layers meet: the URL parses, and the
+    /// plan still refuses to make it `.ready`.
+    func testADestructiveTVURLStillPlansAsNeedingConfirmation() {
+        guard case .tvAction(let request) = command("crisp://tv/uuid:1/power?value=off") else {
+            return XCTFail("a power URL should parse")
+        }
+        let plan = request.plan(known: [TVDeviceID("uuid:1"): .webOS])
+        guard case .needsConfirmation = plan else {
+            return XCTFail("a TV power-off from a URL planned \(plan)")
+        }
+    }
 }

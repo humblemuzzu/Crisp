@@ -167,7 +167,10 @@ enum OnboardingPlan {
     static func verdict(for fact: OnboardingDisplayFact) -> OnboardingDisplayVerdict {
         if fact.isBuiltin { return .builtIn }
         switch fact.rung {
-        case .ddcHardware: return .hardwareDDC
+        // A TV over the network is grouped with DDC rather than with the
+        // software rungs, because the guide's question is "can Crisp move this
+        // screen's actual backlight?" and for a paired LG the answer is yes.
+        case .ddcHardware, .tvNetwork: return .hardwareDDC
         case .gammaTable(let reason), .overlay(let reason): return .softwareOnly(reason)
         case .unavailable(let reason): return .noControl(reason)
         }

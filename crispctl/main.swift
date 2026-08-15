@@ -10,14 +10,20 @@
 //   crispctl preset apply <id> [--force]       apply one
 //   crispctl capabilities [id]    read the monitor's capabilities string (VCP 0xF3)
 //   crispctl watch [id]           poll brightness every 2s until interrupted
+//   crispctl tv list              the TVs paired in the app
+//   crispctl tv <feature> <id> <value> [--force]   drive one over the network
 //
 // Display IDs are the 1-based indices from `crispctl list`; omit to target the
-// only external display (fails if there is more than one).
+// only external display (fails if there is more than one). TV ids are the
+// device identifiers `crispctl tv list` prints — never an address, because a
+// DHCP lease moves.
 //
-// `set` and `preset apply` are the only commands that change anything, and the
-// codes `DDCFeatureRegistry` marks destructive (0x60, 0xD6, 0x04, 0x0C, 0x14,
-// 0x8D, 0xCA) need `--force` or an answered prompt — see `confirmDestructive`.
-// Both go through it, on the same terms.
+// `set`, `preset apply` and the destructive half of `tv` are the only commands
+// that change anything. The codes `DDCFeatureRegistry` marks destructive (0x60,
+// 0xD6, 0x04, 0x0C, 0x14, 0x8D, 0xCA), and the TV features `TVFeatureRegistry`
+// marks destructive (power, input), need `--force` or an answered prompt — see
+// `confirmDestructive` and `confirmDestructiveTV`. All of them go through it, on
+// the same terms.
 
 import Foundation
 import CoreGraphics
@@ -33,6 +39,7 @@ struct CrispCLI {
             case "get": try get(args)
             case "set": try set(args)
             case "preset", "presets": try preset(args)
+            case "tv", "tvs": try tv(args)
             case "capabilities", "caps": try capabilities(args)
             case "watch": try watch(args)
             case "help", "-h", "--help": help()
@@ -354,6 +361,182 @@ struct CrispCLI {
         print("applied \(applied) setting(s) from preset '\(preset.name)'")
     }
 
+    // MARK: - Smart TVs
+
+    /// Runs one async operation and blocks until it finishes.
+    ///
+    /// The TV stack is `async` all the way down (every wait is bounded, because
+    /// an unreachable television is the ordinary case), and this file's entry
+    /// point is not. Same shape as `runAsync` above, one concurrency model over.
+    static func runBlocking<T: Sendable>(_ operation: @escaping @Sendable () async -> T) -> T? {
+        let semaphore = DispatchSemaphore(value: 0)
+        let box = ResultBox<T>()
+        Task {
+            box.set(await operation())
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return box.value
+    }
+
+    /// A result slot the `Task` writes and the waiting thread reads once the
+    /// semaphore has ordered the two. A class rather than a captured `var`,
+    /// which a concurrent closure cannot write to.
+    final class ResultBox<T>: @unchecked Sendable {
+        private(set) var value: T?
+        func set(_ newValue: T) { value = newValue }
+    }
+
+    /// The TVs the app has paired, read out of its own `displays.json`.
+    ///
+    /// Read-only, exactly like `preset list`: a TV the user paired in the panel
+    /// has to be the TV `crispctl tv` drives, and two files would drift the first
+    /// time either one wrote. The credentials are **not** here — they are in the
+    /// Keychain (`TVCredentialStore`), which this shares with the app.
+    static func loadTVDevices() throws -> [TVDevice] {
+        guard let data = try? Data(contentsOf: stateDocumentURL) else {
+            throw CLIError("no saved state at \(stateDocumentURL.path) — pair a TV in Crisp first")
+        }
+        let (document, failure) = DisplayStateDocument.decoding(data)
+        if let failure {
+            throw CLIError("\(stateDocumentURL.lastPathComponent) is unreadable: \(failure.localizedDescription)")
+        }
+        return DisplayStateMigration.upgraded(document).tvDevices
+    }
+
+    static func tv(_ args: [String]) throws {
+        var args = args
+        let forced = args.contains("--force") || args.contains("-f")
+        args.removeAll { $0 == "--force" || $0 == "-f" }
+
+        switch args.count >= 2 ? args[1].lowercased() : "list" {
+        case "list":
+            try tvList()
+        case "brightness", "volume", "mute", "power", "input":
+            guard args.count >= 4 else {
+                throw CLIError("usage: crispctl tv <brightness|volume|mute|power|input> <tv-id> <value> [--force]")
+            }
+            try tvSet(feature: args[1].lowercased(), id: args[2], value: args[3], forced: forced)
+        default:
+            throw CLIError("unknown tv action '\(args[1])' (list|brightness|volume|mute|power|input)")
+        }
+    }
+
+    static func tvList() throws {
+        let devices = try loadTVDevices()
+        guard !devices.isEmpty else {
+            print("no TVs paired")
+            return
+        }
+        for device in devices {
+            print("\(device.id.rawValue)  \(device.name)")
+            print("    platform: \(device.platform.rawValue)  host: \(device.host)")
+            let reachable = TVFeatureRegistry.ordered.map { feature -> String in
+                let support = TVFeatureRegistry.support(feature, on: device.platform)
+                let mark: String
+                switch support {
+                case .readWrite: mark = "rw"
+                case .writeOnly: mark = "w"
+                case .unsupported: mark = "-"
+                }
+                return "\(feature.rawValue):\(mark)"
+            }
+            print("    features: \(reachable.joined(separator: " "))")
+            for feature in TVFeatureRegistry.ordered {
+                guard let caveat = TVFeatureRegistry.support(feature, on: device.platform).caveat else { continue }
+                print("    note (\(feature.rawValue)): \(caveat.text)")
+            }
+        }
+    }
+
+    /// The CLI's half of the TV write gate.
+    ///
+    /// Deliberately the same arrangement `confirmDestructive` documents for DDC,
+    /// and for the same reason: the app's `TVWriteGate` needs a
+    /// `DestructiveWriteConsent`, and the two types that mint one are a SwiftUI
+    /// alert and an `NSAlert` — neither of which exists on a command line.
+    /// Reproducing the gate here would mean declaring a fourth conformer to that
+    /// protocol, which AGENTS.md names as the one remaining escape hatch in the
+    /// design. So the CLI does not reproduce the gate; it reproduces the part
+    /// that protects the user, which is that a destructive action prints its
+    /// hazard and needs a deliberate second step.
+    ///
+    /// Interactive shells get a y/N prompt; anything scripted (stdin not a TTY,
+    /// which is also every CI job) has to say `--force`.
+    static func confirmDestructiveTV(feature: TVFeatureID, value: String, forced: Bool) throws {
+        let spec = feature.spec
+        guard spec.destructive else { return }
+        if forced { return }
+
+        let hazard = spec.hazard ?? "Nothing is known about what this does to the TV."
+        FileHandle.standardError.write(Data("""
+        \(spec.title) on a TV is a destructive action.
+        \(hazard)
+        about to set: \(feature.rawValue) = \(value)
+
+        """.utf8))
+
+        guard isatty(FileHandle.standardInput.fileDescriptor) == 1 else {
+            throw CLIError("refusing to change TV \(feature.rawValue) without --force")
+        }
+        print("continue? [y/N] ", terminator: "")
+        let answer = (readLine() ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+        guard answer == "y" || answer == "yes" else {
+            throw CLIError("cancelled; nothing was sent")
+        }
+    }
+
+    static func tvSet(feature name: String, id: String, value: String, forced: Bool) throws {
+        let devices = try loadTVDevices()
+        guard let device = devices.first(where: { $0.id.rawValue == id || $0.name == id }) else {
+            throw CLIError("no paired TV with id or name '\(id)' — try `crispctl tv list`")
+        }
+        guard let feature = TVFeatureID(rawValue: name) else {
+            throw CLIError("unknown TV feature '\(name)'")
+        }
+        let support = TVFeatureRegistry.support(feature, on: device.platform)
+        guard support.canWrite else {
+            throw CLIError(support.unsupportedReason?.text ?? "this TV cannot do that")
+        }
+
+        let action: TVActionValue
+        switch feature.spec.kind {
+        case .percent:
+            guard let percent = Double(value), percent.isFinite else {
+                throw CLIError("'\(value)' is not a percentage")
+            }
+            action = .percent(min(max(percent, 0), 100))
+        case .flag:
+            switch value.lowercased() {
+            case "on", "true", "1": action = .flag(true)
+            case "off", "false", "0": action = .flag(false)
+            default: throw CLIError("'\(value)' is not on/off")
+            }
+        case .code:
+            action = .code(value)
+        }
+
+        try confirmDestructiveTV(feature: feature, value: value, forced: forced)
+
+        // The same conversation the app runs (`TVConversation`), not a second
+        // copy of it: a TV paired in the panel has to behave identically here.
+        let pacer = TizenKeyPacer()
+        let outcome = runBlocking {
+            await TVConversation.apply(
+                feature: feature, value: action, to: device,
+                credentials: .shared, rateLimiter: pacer
+            )
+        }
+        switch outcome {
+        case .some(.success(let message)):
+            print(message)
+        case .some(.failure(let message)):
+            throw CLIError(message)
+        case .none:
+            throw CLIError("the TV command did not complete")
+        }
+    }
+
     /// Reads the monitor's capabilities string (DDC/CI command 0xF3).
     ///
     /// Read-only: 0xF3 asks the monitor to describe itself and changes nothing.
@@ -424,18 +607,26 @@ struct CrispCLI {
           crispctl preset apply <id|name> [--force]  apply one to whatever is attached
           crispctl capabilities [id]    read the capabilities string (VCP 0xF3, read-only)
           crispctl watch [id]           poll brightness until interrupted
+          crispctl tv list              TVs paired in the app, and what each can do
+          crispctl tv <feature> <tv-id> <value> [--force]   drive one over the network
 
         features: brightness | contrast | volume | input | power | red | green | blue
         ids are the 1-based indices from `crispctl list` (omit when only one display).
+
+        TV features: brightness | volume | mute | power | input. TV ids come from
+        `crispctl tv list` and are the TV's own identifier, never its address (a
+        DHCP lease moves). Samsung (Tizen) TVs expose no brightness command at
+        all — `tv list` prints that next to the feature rather than failing later.
 
         presets carry brightness, contrast and volume only, never an input source;
         a display a preset names but that is not connected is skipped, not an error.
 
         --force  proceed with a write the registry marks destructive (0x60 input,
                  0xD6 power, 0x04 factory reset, 0x0C/0x14 colour, 0x8D blank,
-                 0xCA OSD lock). Without it crispctl prints the hazard and asks
-                 first — and refuses outright when stdin is not a terminal, so a
-                 script can never lose the screen by accident.
+                 0xCA OSD lock; on a TV, power and input). Without it crispctl
+                 prints the hazard and asks first — and refuses outright when
+                 stdin is not a terminal, so a script can never lose the screen
+                 by accident.
         """)
     }
 }

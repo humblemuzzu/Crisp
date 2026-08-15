@@ -28,6 +28,13 @@ import Foundation
 //     crisp://display/<display-uuid>/<feature>?value=<v>
 //     crisp://displays/refresh
 //     crisp://preset/<preset-id>
+//     crisp://tv/<tv-device-id>/<feature>?value=<v>
+//
+// The `tv` form addresses a paired smart TV rather than a display, and it is held
+// to exactly the same three properties. In particular a TV's power and input are
+// destructive in `TVFeatureRegistry` for the same reasons VCP 0xD6 and 0x60 are,
+// `TVActionRequest.plan` can only answer `needsConfirmation` for them, and this
+// parser must not grow a shortcut around that any more than the display form may.
 //
 // `<display-uuid>` is the stable per-display identity everything else in the app
 // keys on (`DisplayUUID`), never a `CGDirectDisplayID` — macOS reassigns those
@@ -51,6 +58,9 @@ import Foundation
 enum CrispURLCommand: Equatable, Sendable {
     /// A change to one display, still subject to `AutomationRequest.plan`.
     case write(AutomationRequest)
+    /// A change to one paired smart TV, still subject to
+    /// `TVActionRequest.plan` and then to `TVWriteGate.approve`.
+    case tvAction(TVActionRequest)
     /// Apply a stored preset by identifier. The preset is not resolved here —
     /// this file has no store and no display list — and every setting it turns
     /// out to contain goes through `AutomationRequest.plan` individually, so a
@@ -105,6 +115,8 @@ enum CrispURL {
             return displayCommand(path: path, components: components, origin: origin)
         case "preset":
             return presetCommand(path: path, components: components, origin: origin)
+        case "tv":
+            return tvCommand(path: path, components: components, origin: origin)
         case "":
             return .ignored(reason: "the URL names no target (expected \(scheme)://display/<uuid>/<feature>)")
         default:
@@ -176,6 +188,76 @@ enum CrispURL {
             return .ignored(reason: "'\(text)' is not a value \(feature.rawValue) accepts")
         }
         return .write(AutomationRequest(origin: origin, display: uuid, feature: feature, value: value))
+    }
+
+    // MARK: - crisp://tv/<device-id>/<feature>
+
+    /// A TV action. Same grammar, same rule 2, and one difference that is worth
+    /// naming: a TV feature's value can be a *flag*, so `value=off` is legal here
+    /// where it would be meaningless for a VCP code.
+    private static func tvCommand(
+        path: [String], components: URLComponents, origin: AutomationOrigin
+    ) -> CrispURLCommand {
+        guard path.count == 2 else {
+            return .ignored(reason: "expected \(scheme)://tv/<device-id>/<feature>?value=<v>")
+        }
+        guard let device = tvIdentifier(path[0]) else {
+            return .ignored(reason: "the TV identifier is empty or malformed")
+        }
+        guard let feature = tvFeature(named: path[1]) else {
+            return .ignored(reason: "unknown TV feature '\(path[1])'")
+        }
+        guard let text = soleValueParameter(components.queryItems) else {
+            return .ignored(reason: "expected exactly one 'value' parameter")
+        }
+        guard let value = tvValue(text, for: feature) else {
+            return .ignored(reason: "'\(text)' is not a value \(feature.rawValue) accepts")
+        }
+        return .tvAction(
+            TVActionRequest(origin: origin, device: device, feature: feature, value: value)
+        )
+    }
+
+    /// Held to the same shape as a display identifier: non-empty, whitespace-free
+    /// and bounded in *bytes* (see `maximumIdentifierLength` for why bytes).
+    private static func tvIdentifier(_ text: String) -> TVDeviceID? {
+        guard !text.isEmpty, text.utf8.count <= maximumIdentifierLength,
+              text.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return nil }
+        return TVDeviceID(text)
+    }
+
+    private static func tvFeature(named name: String) -> TVFeatureID? {
+        let wanted = name.lowercased()
+        return TVFeatureID.allCases.first { $0.rawValue.lowercased() == wanted }
+    }
+
+    /// The text as the feature's own value shape, taken from `TVFeatureRegistry`
+    /// rather than guessed from the text — the same rule the display form
+    /// follows, and for the same reason.
+    private static func tvValue(_ text: String, for feature: TVFeatureID) -> TVActionValue? {
+        switch feature.spec.kind {
+        case .percent:
+            // `Double` also parses "nan" and "inf"; `TVActionRequest.plan`
+            // refuses both, which is where that check belongs — every origin goes
+            // through it, and only some go through this parser.
+            guard let percent = Double(text) else { return nil }
+            return .percent(percent)
+        case .flag:
+            return flag(text).map(TVActionValue.flag)
+        case .code:
+            return .code(text)
+        }
+    }
+
+    /// `on`/`off`, `true`/`false`, `1`/`0`. Three spellings because a URL is
+    /// typed by hand as often as it is generated; nothing else, because a parser
+    /// that accepts "yes" today accepts "y" in a year and then has to guess.
+    private static func flag(_ text: String) -> Bool? {
+        switch text.lowercased() {
+        case "on", "true", "1": return true
+        case "off", "false", "0": return false
+        default: return nil
+        }
     }
 
     // MARK: - Pieces

@@ -79,6 +79,85 @@ struct AnyCodingKey: CodingKey {
     init?(intValue: Int) { nil }
 }
 
+// MARK: - Reading a value out
+
+/// Total, non-throwing accessors.
+///
+/// Added for the smart-TV protocol engines (`WebOSSSAP`, `TizenRemote`), which
+/// parse JSON that arrived over the network from a device nobody controls. A
+/// `Codable` struct per message shape is the wrong tool there: every field is
+/// optional in practice, several are typed differently across firmware versions
+/// (Samsung sends `"true"` where LG sends `true`), and a throwing decode of a
+/// whole frame turns one unexpected field into a dropped reply.
+///
+/// So the rule these accessors encode is: **asking for the wrong type is `nil`,
+/// never a throw and never a coercion.** A number read as a string is absent, not
+/// `"1"`; that is what stops a malformed frame becoming a wrong value rather than
+/// no value.
+extension JSONValue {
+    var stringValue: String? {
+        guard case .string(let value) = self else { return nil }
+        return value
+    }
+
+    var numberValue: Double? {
+        guard case .number(let value) = self else { return nil }
+        return value
+    }
+
+    var boolValue: Bool? {
+        guard case .bool(let value) = self else { return nil }
+        return value
+    }
+
+    var objectValue: [String: JSONValue]? {
+        guard case .object(let value) = self else { return nil }
+        return value
+    }
+
+    var arrayValue: [JSONValue]? {
+        guard case .array(let value) = self else { return nil }
+        return value
+    }
+
+    /// A child by key, or nil for anything that is not an object with that key.
+    subscript(key: String) -> JSONValue? { objectValue?[key] }
+
+    /// A boolean that may have arrived as a JSON boolean **or** as a string.
+    ///
+    /// Samsung's `GET /api/v2/` returns every boolean-ish field as a string
+    /// (`"TokenAuthSupport":"true"`), and a build that only accepted real
+    /// booleans would decide every Tizen TV needs no token and then connect to
+    /// the wrong port. Only the two exact spellings are accepted; anything else
+    /// is `nil` rather than false, because "the field said something we do not
+    /// understand" and "the field said no" are different facts.
+    var looseBoolValue: Bool? {
+        if let value = boolValue { return value }
+        switch stringValue?.lowercased() {
+        case "true": return true
+        case "false": return false
+        default: return nil
+        }
+    }
+
+    /// Parses one JSON document into a value, or nil. Never throws: every caller
+    /// is reading something a device on the network sent.
+    static func parse(_ text: String) -> JSONValue? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(JSONValue.self, from: data)
+    }
+
+    /// Serialises with sorted keys, so a frame this app builds is byte-identical
+    /// run to run — which is what lets the wire format itself be asserted in a
+    /// test instead of only its parse.
+    func serialized() -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(self) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
 /// Reading and writing the "everything this build did not recognise" bag.
 ///
 /// Two free functions rather than a protocol with an associated type: both call

@@ -65,6 +65,7 @@ codes.
 crisp://display/<display-uuid>/<feature>?value=<v>
 crisp://displays/refresh
 crisp://preset/<preset-id>
+crisp://tv/<tv-device-id>/<feature>?value=<v>
 ```
 
 `<feature>` is the registry's own name for the VCP code — `brightness`,
@@ -72,10 +73,19 @@ crisp://preset/<preset-id>
 Percent-shaped features take a number (clamped to 0–100); `input` takes a raw
 code, decimal or `0x`-prefixed.
 
+The `tv` form addresses a paired smart TV instead of a display, with
+`TVFeatureRegistry`'s names — `brightness`, `volume`, `mute`, `power`, `input`.
+Flag-shaped features (`mute`, `power`) take `on`/`off` and nothing else; `input`
+takes the identifier the TV itself uses (`HDMI_1` on webOS, `KEY_HDMI2` on
+Tizen). `<tv-device-id>` is the TV's own identifier from `crispctl tv list`,
+never its address — a DHCP lease moves, and a link built against an address would
+end up aimed at whatever took it. See `docs/smart-tv.md`.
+
 ```sh
 open 'crisp://display/AEB55F97-FD93-4F8D-AD10-0942959D069C/brightness?value=50'
 open 'crisp://displays/refresh'
 open "crisp://preset/$(./crispctl-bin preset list | head -1 | cut -d' ' -f1)"
+open 'crisp://tv/uuid:0d1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9/volume?value=25'
 ```
 
 ### The security model
@@ -207,6 +217,7 @@ App Intents genuinely cannot serve — and it would have to route through
 | Concern | File |
 |---|---|
 | What automation may ask for; the destructive rule | `Crisp/Models/AutomationRequest.swift` |
+| The same, for smart TVs | `Crisp/Models/TVAction.swift` |
 | The `crisp://` grammar | `Crisp/Models/CrispURL.swift` |
 | Shortcut combinations, conflicts, persistence shape | `Crisp/Models/HotkeyBinding.swift` |
 | Executing a request; the one confirmation dialog | `Crisp/Services/AutomationService.swift` |
@@ -214,6 +225,7 @@ App Intents genuinely cannot serve — and it would have to route through
 | What a preset may contain; the apply plan | `Crisp/Models/DDCPreset.swift` |
 | Shortcuts entities + queries | `Crisp/Intents/DisplayEntity.swift`, `Crisp/Intents/PresetEntity.swift` |
 | The seven intents | `Crisp/Intents/CrispIntents.swift` |
+| The five smart-TV intents and their entity | `Crisp/Intents/TVIntents.swift` |
 | The recorder UI | `Crisp/Views/HotkeyRecorderView.swift` |
 | URL delivery, hotkey start-up | `Crisp/App/AppDelegate.swift` |
 | Scheme registration | `scripts/make-app.sh`, `scripts/release.sh`, `scripts/build-dmg.sh` |

@@ -6,5 +6,21 @@
 	<false/>
 	<key>com.apple.security.automation.apple-events</key>
 	<true/>
+	<!-- Outgoing connections only, and only for smart-TV control: a WebSocket to
+	     an LG or Samsung television on the local network, plus the HTTP/SSDP
+	     requests that find one. Added in the phase that introduced that feature
+	     and in no earlier one, so the diff that granted network access is the
+	     diff that needed it.
+
+	     There is deliberately no com.apple.security.network.server: Crisp binds
+	     no port and listens for nothing. BetterDisplay runs an HTTP server on
+	     localhost:55777; docs/automation.md sets out why this app does not, and
+	     the absence of the server entitlement is that argument made structural.
+
+	     scripts/check-boundaries.sh pins this file's key set, so adding an
+	     entitlement is a visible edit to that script with an argument attached
+	     rather than a line nobody reviews. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
 </dict>
 </plist>

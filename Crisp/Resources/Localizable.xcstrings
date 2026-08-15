@@ -130,10 +130,16 @@
         }
       }
     },
+    "%@: refreshed" : {
+
+    },
     "%lld" : {
       "shouldTranslate" : false
     },
     "%lld active" : {
+
+    },
+    "%lld added" : {
 
     },
     "%lld assigned" : {
@@ -205,6 +211,12 @@
 
     },
     "Add ⌘, ⌥ or ⌃ to the shortcut. A shortcut without one would take that key from every app." : {
+
+    },
+    "Add a TV…" : {
+
+    },
+    "Address" : {
 
     },
     "Adds finer in-between steps for how large everything looks" : {
@@ -518,6 +530,9 @@
         }
       }
     },
+    "Change this TV?" : {
+
+    },
     "Check for Updates at Launch" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -656,6 +671,9 @@
     "Confirmed" : {
 
     },
+    "Continue" : {
+
+    },
     "Contrast" : {
       "localizations" : {
         "zh-Hans" : {
@@ -769,10 +787,16 @@
     "Crisp can still dim these, but by darkening the image rather than the backlight. That is usually a cable or hub in the way (DisplayLink adapters and some MST hubs carry no DDC), or DDC/CI switched off in the monitor's own menu." : {
 
     },
+    "Crisp cannot reach this TV right now, so there is nothing to dim. Check it is switched on and on the same network as this Mac." : {
+
+    },
     "Crisp controls external monitors, and right now only your Mac's own display is connected." : {
 
     },
     "Crisp controls external monitors, and there are none connected right now." : {
+
+    },
+    "Crisp could not reach the TV at %@. Check it is switched on, on the same network as this Mac, and not on a separate guest or IoT network." : {
 
     },
     "Crisp Diagnostics" : {
@@ -1006,6 +1030,9 @@
         }
       }
     },
+    "Enter the TV's address first." : {
+
+    },
     "every day" : {
 
     },
@@ -1105,6 +1132,9 @@
           }
         }
       }
+    },
+    "Find TVs" : {
+
     },
     "Follow the pointer" : {
       "localizations" : {
@@ -1342,6 +1372,9 @@
     "Input %@ is not confirmed on this monitor. If nothing is attached to it the screen goes blank, and the only way back is the monitor's own buttons." : {
 
     },
+    "Input identifier" : {
+
+    },
     "Input source" : {
 
     },
@@ -1349,6 +1382,9 @@
 
     },
     "Input source code" : {
+
+    },
+    "Input…" : {
 
     },
     "Invert Colors" : {
@@ -1424,6 +1460,9 @@
     "Let the brightness keys reach your monitor" : {
 
     },
+    "LG (webOS)" : {
+
+    },
     "Loading profiles…" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1433,6 +1472,9 @@
           }
         }
       }
+    },
+    "Looking for TVs on this network…" : {
+
     },
     "Lowest" : {
       "localizations" : {
@@ -1503,6 +1545,15 @@
       }
     },
     "Mute" : {
+
+    },
+    "Mute TV" : {
+
+    },
+    "Muted" : {
+
+    },
+    "Mutes or unmutes a paired TV." : {
 
     },
     "My Preset" : {
@@ -1616,10 +1667,16 @@
     "None" : {
 
     },
+    "None added" : {
+
+    },
     "None assigned" : {
 
     },
     "None saved" : {
+
+    },
+    "Not available on this TV" : {
 
     },
     "not mapped yet" : {
@@ -1642,6 +1699,9 @@
     "Nothing is broken — plug a monitor in and its controls appear in the menu bar panel by themselves. Crisp deliberately leaves the rest of your displays alone." : {
 
     },
+    "off" : {
+
+    },
     "Off" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1662,6 +1722,9 @@
           }
         }
       }
+    },
+    "on" : {
+
     },
     "On" : {
       "localizations" : {
@@ -1723,6 +1786,15 @@
     "Overlay" : {
 
     },
+    "Pair" : {
+
+    },
+    "Paired with %@." : {
+
+    },
+    "Pairing puts a prompt on the TV. Accept it there, then Crisp remembers this TV." : {
+
+    },
     "Pause Adjustments" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1776,6 +1848,9 @@
           }
         }
       }
+    },
+    "Platform" : {
+
     },
     "Port name" : {
 
@@ -1967,6 +2042,9 @@
         }
       }
     },
+    "Remove" : {
+
+    },
     "Remove the shortcut for %@" : {
 
     },
@@ -2020,6 +2098,15 @@
 
     },
     "Same level" : {
+
+    },
+    "Samsung (Tizen)" : {
+
+    },
+    "Samsung TVs do not report which input they are on to anything on the local network, so Crisp shows the input as unknown rather than guessing." : {
+
+    },
+    "Samsung's Tizen TVs expose no brightness command on the network — the picture settings only exist on the TV's own menu. Volume, power and input still work." : {
 
     },
     "Save" : {
@@ -2088,10 +2175,22 @@
     "Set brightness of ${display} to ${value}" : {
 
     },
+    "Set brightness of ${tv} to ${value}" : {
+
+    },
     "Set Contrast" : {
 
     },
     "Set contrast of ${display} to ${value}" : {
+
+    },
+    "Set mute of ${tv} to ${muted}" : {
+
+    },
+    "Set TV Brightness" : {
+
+    },
+    "Set TV Volume" : {
 
     },
     "Set Volume" : {
@@ -2100,10 +2199,19 @@
     "Set volume of ${display} to ${value}" : {
 
     },
+    "Set volume of ${tv} to ${value}" : {
+
+    },
     "Sets a display's brightness. Uses the monitor's own backlight over DDC where it answers." : {
 
     },
     "Sets a display's hardware contrast (VCP 0x12), for monitors that answer a contrast read." : {
+
+    },
+    "Sets a paired LG (webOS) TV's backlight over the network. Samsung (Tizen) TVs expose no brightness command at all, so this refuses with the reason rather than doing nothing." : {
+
+    },
+    "Sets a paired TV's volume over the network." : {
 
     },
     "Sets the speaker volume of a monitor that exposes DDC volume (VCP 0x62)." : {
@@ -2216,6 +2324,9 @@
     "Switch ${display} to input code ${code}" : {
 
     },
+    "Switch ${tv} to input ${input}" : {
+
+    },
     "Switch Back Now" : {
 
     },
@@ -2235,10 +2346,16 @@
     "Switch input?" : {
 
     },
+    "Switch TV Input" : {
+
+    },
     "Switch which machine the monitor is showing, without reaching for its buttons." : {
 
     },
     "Switches a monitor to another input, after asking. Crisp always asks: if nothing is attached to that port the screen goes blank and only the monitor's own buttons can bring it back." : {
+
+    },
+    "Switches a paired TV to another input, after asking. Crisp always asks: if nothing is attached to that input the screen goes blank, and on Samsung TVs Crisp cannot even read which input it landed on." : {
 
     },
     "Switching back to input %@…" : {
@@ -2288,6 +2405,9 @@
         }
       }
     },
+    "Televisions have no DDC/CI channel, so Crisp moves this TV's own backlight over the network instead." : {
+
+    },
     "Test" : {
 
     },
@@ -2295,6 +2415,12 @@
 
     },
     "The built-in panel's own backlight, through IOKit." : {
+
+    },
+    "The connection to the TV was closed." : {
+
+    },
+    "The device at %@ is not a Tizen TV." : {
 
     },
     "The last switch was undone at your request." : {
@@ -2334,10 +2460,34 @@
     "The real backlight, not a dark filter drawn over the image." : {
 
     },
+    "The TV completed pairing without sending a key." : {
+
+    },
+    "The TV did not answer in time." : {
+
+    },
+    "The TV did not answer the pairing request in time." : {
+
+    },
+    "The TV refused the pairing request." : {
+
+    },
+    "The TV refused the pairing request. Accept the prompt on the TV screen and try again." : {
+
+    },
+    "the TV refused the volume command" : {
+
+    },
+    "The TV sent something Crisp could not read: %@" : {
+
+    },
     "These are the monitors Crisp can see. The menu bar panel gets one section for each." : {
 
     },
     "These shortcuts need no Accessibility access: macOS delivers the key straight to Crisp, so they keep working even when the F1/F2 keys do not." : {
+
+    },
+    "this action has no remote key on a Samsung TV" : {
 
     },
     "This display has no DDC channel on this connection, so Crisp dims the image with the GPU's color table instead of the backlight." : {
@@ -2353,6 +2503,15 @@
 
     },
     "This is the one permission Crisp asks for, and it is only for the keys. Sliders, contrast, volume and input all work without it." : {
+
+    },
+    "This TV presented a different certificate than the one Crisp recorded when it was paired. Crisp refused the connection. Remove the TV and add it again if you replaced or factory-reset it." : {
+
+    },
+    "this TV's firmware did not accept the brightness command" : {
+
+    },
+    "This TV's sound is going to %@, so it ignores an exact volume. Crisp steps the volume up and down instead." : {
 
     },
     "This virtual display is currently active. Deleting it will disable it immediately." : {
@@ -2386,6 +2545,39 @@
           }
         }
       }
+    },
+    "Turn Off" : {
+
+    },
+    "Turn off ${tv}" : {
+
+    },
+    "Turn TV Off" : {
+
+    },
+    "Turns a paired TV off, after asking. Crisp always asks: the control connection goes down with the TV, so Crisp cannot turn it back on — only its own remote can." : {
+
+    },
+    "TV" : {
+
+    },
+    "TV actions" : {
+
+    },
+    "TV address" : {
+
+    },
+    "TV brightness" : {
+
+    },
+    "TV name" : {
+
+    },
+    "TV type" : {
+
+    },
+    "TV volume" : {
+
     },
     "Unable to switch to %@, please try again" : {
       "localizations" : {

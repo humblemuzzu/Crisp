@@ -317,7 +317,11 @@ final class BrightnessService: @unchecked Sendable {
                 ddcAvailable: available,
                 hdrSoftwareDimmed: hdrDimmed,
                 gammaWritable: gammaOK,
-                hasScreen: NSScreen.screen(for: displayID) != nil
+                hasScreen: NSScreen.screen(for: displayID) != nil,
+                // nil unless the user bound a TV to this display, so a desk with
+                // no television resolves through exactly the branches it always
+                // did — the ladder gains a rung, not a behaviour change.
+                tvBacklightReachable: TVDeviceService.shared.backlightReachable(forDisplay: display.stateUUID)
             )
         )
         if display.brightnessRung != rung { display.brightnessRung = rung }
@@ -396,10 +400,15 @@ final class BrightnessService: @unchecked Sendable {
             }
         } else {
             switch rung {
-            case .gammaTable, .overlay, .unavailable:
+            case .gammaTable, .overlay, .unavailable, .tvNetwork:
                 // Nothing to read back: gamma and the overlay have no register to
                 // report a value, and probing DDC on a display that has no channel
                 // (or none that works) only burns I2C timeouts. Leave the value as is.
+                //
+                // A TV is on this branch for the same reason and one more: its
+                // backlight is readable, but over the network by
+                // `TVDeviceService`, not by a DDC read on a channel that does not
+                // exist. Issuing one here would be an I2C timeout per refresh.
                 return
             case .ddcHardware:
                 break
@@ -514,6 +523,12 @@ final class BrightnessService: @unchecked Sendable {
                 switch refreshRung(for: display) {
                 case .ddcHardware:
                     writeDDCBrightnessCoalesced(percent: hardware, for: displayID)
+                case .tvNetwork:
+                    // Coalesced inside the TV service for the same reason the DDC
+                    // writer coalesces: a slider drag emits far more values than a
+                    // network round trip can carry, and the latest one is the only
+                    // one that matters.
+                    TVDeviceService.shared.setBacklight(hardware, forDisplay: display.stateUUID)
                 case .gammaTable:
                     queue.async { [weak self] in
                         self?.setSoftwareBrightness(hardware, for: displayID)
@@ -781,6 +796,16 @@ final class BrightnessService: @unchecked Sendable {
                 // I2C bus are dropped instead of queued.
                 applyStep = { [weak self] value in
                     self?.writeDDCBrightnessCoalesced(percent: value, for: displayID)
+                }
+            case .tvNetwork:
+                // The TV service coalesces, so the animation's ~125 steps a second
+                // collapse into whatever the network can actually carry rather
+                // than queueing up behind it.
+                let uuid = display.stateUUID
+                applyStep = { value in
+                    MainActor.assumeIsolated {
+                        TVDeviceService.shared.setBacklight(value, forDisplay: uuid)
+                    }
                 }
             case .gammaTable:
                 // The transfer-table write is a synchronous WindowServer call, so

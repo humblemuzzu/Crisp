@@ -75,6 +75,8 @@ extension BrightnessRung {
         switch self {
         case .ddcHardware:
             return "DDC hardware backlight"
+        case .tvNetwork(let reason):
+            return "smart-TV backlight over the network — \(reason.text)"
         case .gammaTable(let reason):
             return "GPU colour table (software dimming) — \(reason.text)"
         case .overlay(let reason):

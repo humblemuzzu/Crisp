@@ -9,6 +9,7 @@ set -euo pipefail
 #   ./scripts/check-boundaries.sh                   # run every gate (also: make check-boundaries)
 #   ./scripts/check-boundaries.sh private-frameworks
 #   ./scripts/check-boundaries.sh model-purity
+#   ./scripts/check-boundaries.sh entitlements
 #   ./scripts/check-boundaries.sh --self-test       # prove the detectors still detect
 #
 # ---------------------------------------------------------------------------
@@ -71,6 +72,30 @@ set -euo pipefail
 # The rule was derived from the tree, not assumed: CoreGraphics and IOKit are
 # ALLOWED (several models carry CGDirectDisplayID / IOKit types, which is
 # hardware identity, not UI). Only AppKit / Cocoa / SwiftUI are refused.
+#
+# ---------------------------------------------------------------------------
+# GATE 3 — the entitlement set is pinned
+# ---------------------------------------------------------------------------
+# Why: an entitlement is a capability the user grants the whole app, and the
+# smart-TV phase is what added the first one that reaches off this machine
+# (com.apple.security.network.client). The risk is not that entitlement; it is
+# the next one, added in a diff about something else, in a file nobody re-reads
+# because it has not changed in a year.
+#
+# So the key set is pinned here in the same style as BRIGHTNESS_SHIM_LINES:
+# adding, removing or renaming an entitlement fails the gate until someone edits
+# this list, which puts the capability change in the diff next to an argument
+# for it. The gate checks the *set of keys*, not their values, because the
+# question it exists to force is "what may this app now do", and a key's presence
+# is what answers that.
+#
+# Two absences are load-bearing and are what the gate really defends:
+#   - com.apple.security.network.server — Crisp binds no port and listens for
+#     nothing. BetterDisplay runs an HTTP server on localhost:55777;
+#     docs/automation.md sets out why this app does not, and a missing
+#     entitlement is that argument in a form the linker enforces.
+#   - com.apple.security.device.* / files.* — none are needed, and each is a
+#     TCC prompt this app has no business raising.
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -294,6 +319,55 @@ gate_model_purity() {
 	echo "    ${#files[@]} model files checked (${MODEL_IMPORT_EXCEPTIONS// /, } allowlisted)"
 }
 
+# --- gate 3: the entitlement set is pinned ----------------------------------
+
+ENTITLEMENTS_FILE='Crisp/Crisp.entitlements'
+
+# Every entitlement this app is allowed to declare, one per line, sorted.
+# Changing this list is how you change what Crisp may do; see the header.
+expected_entitlements() {
+	cat <<-'EOF' | LC_ALL=C sort
+		com.apple.security.app-sandbox
+		com.apple.security.automation.apple-events
+		com.apple.security.network.client
+	EOF
+}
+
+# The <key> names in a plist, sorted. XML comments are not matched, so the
+# rationale block in the entitlements file (which names the entitlements it
+# deliberately does NOT declare) cannot trip the gate.
+entitlement_keys() { # file
+	grep -o '<key>[^<]*</key>' "$1" 2>/dev/null |
+		sed -e 's/<key>//' -e 's|</key>||' |
+		LC_ALL=C sort
+}
+
+scan_entitlements() { # file
+	local file="$1" key
+	if [ ! -f "$file" ]; then
+		report "$(basename "$0")" 1 \
+			"'$file' is missing \u2014 the app's entitlements are pinned by this gate and cannot simply vanish"
+		return
+	fi
+	while IFS= read -r key; do
+		[ -z "$key" ] && continue
+		report "$file" 1 \
+			"undeclared entitlement '$key'. An entitlement is a capability granted to the whole app; add it to expected_entitlements() in $(basename "$0") with an argument for why Crisp needs it."
+	done < <(LC_ALL=C comm -23 <(entitlement_keys "$file") <(expected_entitlements))
+
+	while IFS= read -r key; do
+		[ -z "$key" ] && continue
+		report "$file" 1 \
+			"'$key' is pinned in $(basename "$0") but is no longer declared \u2014 drop it from expected_entitlements() so the list and the app agree."
+	done < <(LC_ALL=C comm -13 <(entitlement_keys "$file") <(expected_entitlements))
+}
+
+gate_entitlements() {
+	echo "==> Gate: the app's entitlement set is pinned"
+	scan_entitlements "$ENTITLEMENTS_FILE"
+	echo "    $(expected_entitlements | wc -l | tr -d ' ') entitlement(s) pinned in $ENTITLEMENTS_FILE"
+}
+
 # --- self-test --------------------------------------------------------------
 
 # A gate that has silently stopped detecting anything looks exactly like a clean
@@ -399,7 +473,45 @@ self_test() {
 	scan_model_imports "$tmp/BadModel.swift" 2>/dev/null
 	expect_violations 1 "model-purity detector missed 'import SwiftUI'"
 
-	[ "$SELF_TEST_STATUS" -eq 0 ] && echo "    detectors OK (private frameworks, string-literal comments, brightness bridge, missing files, model imports)"
+	# Entitlements: an added key is caught, a removed one is caught, and an XML
+	# comment naming an entitlement the app deliberately does not declare is not
+	# mistaken for declaring it (the real file contains exactly such a comment).
+	cat >"$tmp/Extra.entitlements" <<-'EOF'
+		<plist version="1.0"><dict>
+		<key>com.apple.security.app-sandbox</key><false/>
+		<key>com.apple.security.automation.apple-events</key><true/>
+		<key>com.apple.security.network.client</key><true/>
+		<key>com.apple.security.network.server</key><true/>
+		</dict></plist>
+	EOF
+	cat >"$tmp/Missing.entitlements" <<-'EOF'
+		<plist version="1.0"><dict>
+		<key>com.apple.security.app-sandbox</key><false/>
+		<key>com.apple.security.automation.apple-events</key><true/>
+		</dict></plist>
+	EOF
+	cat >"$tmp/Commented.entitlements" <<-'EOF'
+		<plist version="1.0"><dict>
+		<!-- there is deliberately no com.apple.security.network.server here -->
+		<key>com.apple.security.app-sandbox</key><false/>
+		<key>com.apple.security.automation.apple-events</key><true/>
+		<key>com.apple.security.network.client</key><true/>
+		</dict></plist>
+	EOF
+
+	scan_entitlements "$tmp/Extra.entitlements" 2>/dev/null
+	expect_violations 1 "entitlement detector missed an added com.apple.security.network.server"
+
+	scan_entitlements "$tmp/Missing.entitlements" 2>/dev/null
+	expect_violations 1 "entitlement detector missed a pinned entitlement that is no longer declared"
+
+	scan_entitlements "$tmp/Commented.entitlements" 2>/dev/null
+	expect_violations 0 "an entitlement named only in an XML comment was read as declared"
+
+	scan_entitlements "$tmp/Absent.entitlements" 2>/dev/null
+	expect_violations 1 "entitlement detector did not notice the file is missing"
+
+	[ "$SELF_TEST_STATUS" -eq 0 ] && echo "    detectors OK (private frameworks, string-literal comments, brightness bridge, missing files, model imports, entitlements)"
 	return "$SELF_TEST_STATUS"
 }
 
@@ -408,14 +520,16 @@ self_test() {
 case "${1:-all}" in
 private-frameworks) gate_private_frameworks ;;
 model-purity) gate_model_purity ;;
+entitlements) gate_entitlements ;;
 --self-test) self_test; exit $? ;;
 all)
 	self_test
 	gate_private_frameworks
 	gate_model_purity
+	gate_entitlements
 	;;
 *)
-	echo "usage: $0 [all|private-frameworks|model-purity|--self-test]" >&2
+	echo "usage: $0 [all|private-frameworks|model-purity|entitlements|--self-test]" >&2
 	exit 2
 	;;
 esac

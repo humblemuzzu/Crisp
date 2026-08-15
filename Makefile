@@ -38,6 +38,7 @@ SWIFT_SOURCES := Crisp/App/*.swift Crisp/Intents/*.swift Crisp/Models/*.swift \
 SWIFTC_FLAGS := -O -swift-version 5 -strict-concurrency=minimal -parse-as-library \
                 -import-objc-header Crisp/Crisp-Bridging-Header.h \
                 -framework AppKit -framework SwiftUI -framework IOKit -framework CoreAudio \
+                -framework Security -framework CryptoKit -framework Network \
                 -Xlinker -undefined -Xlinker dynamic_lookup
 
 # The zero-warning baseline (AGENTS.md §3.5) is only real if something enforces
@@ -51,6 +52,12 @@ endif
 # frameworks): DDCService on top of the DDCTransport seam (DDCPacket framing,
 # DDCProtocolEngine retry/quarantine, IOKitDDCTransport I2C, DDCServiceMatcher
 # channel pairing). Command Line Tools only.
+#
+# It also shares the smart-TV stack, for the same reason and on the same terms:
+# `TVConversation` over the `TVTransport` seam, and the same Keychain items, so a
+# TV paired in the panel behaves identically from the command line. Kept in sync
+# with project.yml's crispctl target, which explains what the CLI deliberately
+# does not link (the app's destructive-write gate) and why.
 CRISPCTL_SOURCES := crispctl/*.swift \
                     Crisp/Services/DDCService.swift Crisp/Services/IOKitDDCTransport.swift \
                     Crisp/Models/DDCPacket.swift Crisp/Models/DDCTransport.swift \
@@ -58,10 +65,15 @@ CRISPCTL_SOURCES := crispctl/*.swift \
                     Crisp/Models/DDCCapabilities.swift Crisp/Models/DDCFeatureRegistry.swift \
                     Crisp/Models/DisplayUUID.swift Crisp/Models/DisplayStateDocument.swift \
                     Crisp/Models/JSONValue.swift Crisp/Models/DisplayGroup.swift \
-                    Crisp/Models/DDCPreset.swift Crisp/Models/PresetSchedule.swift
+                    Crisp/Models/DDCPreset.swift Crisp/Models/PresetSchedule.swift \
+                    Crisp/Models/TVDevice.swift Crisp/Models/TVTransport.swift \
+                    Crisp/Models/TVTrust.swift Crisp/Models/WebOSProtocol.swift \
+                    Crisp/Models/TizenProtocol.swift Crisp/Services/TVConversation.swift \
+                    Crisp/Services/TVWebSocketTransport.swift Crisp/Services/TVCredentialStore.swift
 CRISPCTL_FLAGS := -O -swift-version 5 -strict-concurrency=minimal -parse-as-library \
                   -import-objc-header Crisp/Crisp-Bridging-Header.h \
-                  -framework IOKit -framework CoreGraphics
+                  -framework IOKit -framework CoreGraphics \
+                  -framework Security -framework CryptoKit
 
 .DEFAULT_GOAL := help
 .PHONY: help dev compile crispctl strict-build test boundaries accessibility lint loc-check check preflight build dmg release clean

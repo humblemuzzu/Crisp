@@ -460,6 +460,7 @@ struct SettingsView: View {
     @State private var showGroups = false
     @State private var showPresets = false
     @State private var showSchedules = false
+    @State private var showTVs = false
     // Accessibility trust drives which Brightness Keys UI shows (toggle vs target menu).
     // AXIsProcessTrusted() isn't observable and the panel content mounts once, so re-read
     // it on every open (below) or the section shows a stale state after the user grants or
@@ -683,6 +684,12 @@ struct SettingsView: View {
             DisplayGroupsSection(isExpanded: $showGroups)
             SchedulesSection(isExpanded: $showSchedules)
 
+            // Smart TVs. Last of the collapsed sections because it is the one
+            // most people will never open: a television has no DDC/CI, so this
+            // is the only way to reach one — and nothing in it touches the
+            // network until the user opens it and asks.
+            TVDevicesSection(isExpanded: $showTVs)
+
             // User-assigned global shortcuts (Carbon RegisterEventHotKey). A
             // separate section from Brightness Keys above on purpose: that one is
             // about redirecting the hardware keys and needs Accessibility, this
@@ -768,6 +775,7 @@ struct SettingsView: View {
             showGroups = false
             showPresets = false
             showSchedules = false
+            showTVs = false
         }
     }
 }

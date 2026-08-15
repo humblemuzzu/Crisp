@@ -55,7 +55,7 @@ final class DisplayStateStoreTests: XCTestCase {
         let data = try JSONEncoder().encode(document)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
-        XCTAssertEqual(json["version"] as? Int, 3)
+        XCTAssertEqual(json["version"] as? Int, DisplayStateDocument.currentVersion)
         let displays = try XCTUnwrap(json["displays"] as? [String: Any])
         let entry = try XCTUnwrap(displays[uuidA.rawValue] as? [String: Any])
         XCTAssertEqual(entry["brightness"] as? Double, 42)
@@ -80,7 +80,10 @@ final class DisplayStateStoreTests: XCTestCase {
         let (document, failure) = DisplayStateDocument.decoding(Data(json.utf8))
 
         XCTAssertNil(failure)
-        XCTAssertEqual(document.version, 3, "a document without a version is read as the current one")
+        XCTAssertEqual(
+            document.version, DisplayStateDocument.currentVersion,
+            "a document without a version is read as the current one"
+        )
         XCTAssertEqual(document.displays[uuidA]?.contrast, 60)
         XCTAssertNil(document.displays[uuidA]?.brightness)
     }
@@ -94,7 +97,7 @@ final class DisplayStateStoreTests: XCTestCase {
 
         XCTAssertNil(failure)
         XCTAssertTrue(document.displays.isEmpty)
-        XCTAssertEqual(document.version, 3)
+        XCTAssertEqual(document.version, DisplayStateDocument.currentVersion)
     }
 
     /// Truncated/garbage bytes (the crash-mid-write case the atomic writer is
@@ -143,7 +146,7 @@ final class DisplayStateStoreTests: XCTestCase {
 
         let document = DisplayStateMigration.migrated(legacy: legacy, into: DisplayStateDocument())
 
-        XCTAssertEqual(document.version, 3)
+        XCTAssertEqual(document.version, DisplayStateDocument.currentVersion)
         XCTAssertEqual(document.displays[uuidA], DisplayState(
             brightness: 72,
             contrast: 48,
@@ -380,7 +383,7 @@ final class DisplayStateStoreIOTests: XCTestCase {
 
         let data = try Data(contentsOf: documentURL)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertEqual(json["version"] as? Int, 3)
+        XCTAssertEqual(json["version"] as? Int, DisplayStateDocument.currentVersion)
         let displays = try XCTUnwrap(json["displays"] as? [String: Any])
         let entry = try XCTUnwrap(displays[uuidA.rawValue] as? [String: Any])
         XCTAssertEqual(entry["contrast"] as? Double, 48)

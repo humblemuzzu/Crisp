@@ -121,9 +121,14 @@ final class DisplayStateStore: @unchecked Sendable {
     var groups: [DisplayGroup] { lock.withLock { document.groups } }
     var presets: [DDCPreset] { lock.withLock { document.presets } }
     var schedules: [PresetSchedule] { lock.withLock { document.schedules } }
+    /// Paired smart TVs (v4). Public facts only: the client key, the token and
+    /// the pinned certificate live in the Keychain, and `TVDevice` has no field
+    /// that could hold one.
+    var tvDevices: [TVDevice] { lock.withLock { document.tvDevices } }
 
     func group(id: String) -> DisplayGroup? { groups.first { $0.id == id } }
     func preset(id: String) -> DDCPreset? { presets.first { $0.id == id } }
+    func tvDevice(id: TVDeviceID) -> TVDevice? { tvDevices.first { $0.id == id } }
 
     func setGroups(_ groups: [DisplayGroup]) {
         mutate { $0.groups = groups }
@@ -135,6 +140,10 @@ final class DisplayStateStore: @unchecked Sendable {
 
     func setSchedules(_ schedules: [PresetSchedule]) {
         mutate { $0.schedules = schedules }
+    }
+
+    func setTVDevices(_ devices: [TVDevice]) {
+        mutate { $0.tvDevices = devices }
     }
 
     private func mutate(_ body: (inout DisplayStateDocument) -> Void) {

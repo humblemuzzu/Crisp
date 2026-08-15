@@ -206,6 +206,10 @@ struct BrightnessRungBadge: View {
     private var label: String {
         switch rung {
         case .ddcHardware: return isBuiltin ? String(localized: "System") : String(localized: "DDC")
+        // Named for the mechanism, like every other rung: this really is the
+        // panel's backlight, it just travels over the LAN rather than the cable,
+        // and a user whose network drops needs the badge to have said so.
+        case .tvNetwork: return String(localized: "TV")
         case .gammaTable: return String(localized: "Gamma")
         case .overlay: return String(localized: "Overlay")
         case .unavailable: return String(localized: "Unavailable")
@@ -215,6 +219,9 @@ struct BrightnessRungBadge: View {
     private var color: Color {
         switch rung {
         case .ddcHardware: return isBuiltin ? .blue : .green
+        // Green with DDC: both move the backlight, which is what the colour has
+        // always meant here.
+        case .tvNetwork: return .green
         case .gammaTable, .overlay: return .orange
         case .unavailable: return .secondary
         }

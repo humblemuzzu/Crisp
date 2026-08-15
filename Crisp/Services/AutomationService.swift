@@ -102,6 +102,8 @@ final class AutomationService {
             outcome = refreshDisplays()
         case .write(let request):
             outcome = await perform(request)
+        case .tvAction(let request):
+            outcome = await performTV(request)
         case .applyPreset(let id, let origin):
             outcome = await applyPreset(id: id, origin: origin)
         }
@@ -142,6 +144,91 @@ final class AutomationService {
             }
             return applyDestructive(write, to: display, consent: consent)
         }
+    }
+
+    // MARK: - Smart TVs
+
+    /// Applies one TV action, or explains why it did not.
+    ///
+    /// Deliberately the same three-step shape as `perform` above: plan, confirm
+    /// if the plan says so, then hand the *approved* value to the service. The
+    /// consent is the same `UserConsent` a destructive DDC write needs, minted by
+    /// the same dialog, and it travels into `TVWriteGate.approve` as a
+    /// `DDCFeatureDiscovery.Authorization` — so switching a television to a dead
+    /// input from a `crisp://` link is gated by exactly the machinery that gates
+    /// VCP 0x60, with no new consent type and no second policy.
+    @discardableResult
+    func performTV(_ request: TVActionRequest) async -> Outcome {
+        let service = TVDeviceService.shared
+        switch request.plan(known: service.knownPlatforms) {
+        case .rejected(let reason):
+            return .refused(reason: reason)
+
+        case .ready(let write):
+            guard case .approved(let approved) = TVWriteGate.approve(write, authorization: .automatic) else {
+                return .refused(reason: "\(write.feature.rawValue) is not allowed on this TV")
+            }
+            return outcome(await service.perform(approved))
+
+        case .needsConfirmation(let write, let hazard):
+            guard let device = service.device(id: write.device) else {
+                return .refused(reason: "no paired TV has the identifier \(write.device.rawValue)")
+            }
+            guard let consent = confirmTV(write, hazard: hazard, on: device, origin: request.origin) else {
+                return .refused(reason: "\(device.name): the change was not confirmed")
+            }
+            guard case .approved(let approved) = TVWriteGate.approve(
+                write, authorization: .confirmed(by: consent)
+            ) else {
+                return .refused(reason: "\(device.name): \(write.feature.rawValue) is not allowed on this TV")
+            }
+            return outcome(await service.perform(approved))
+        }
+    }
+
+    private func outcome(_ result: TVDeviceService.Outcome) -> Outcome {
+        switch result {
+        case .applied(let what): return .applied(what)
+        case .refused(let reason): return .refused(reason: reason)
+        }
+    }
+
+    /// The TV half of the one confirmation.
+    ///
+    /// It is the same dialog with the same default (Cancel), the same re-entrancy
+    /// refusal, and the same hazard-verbatim wording — and crucially it is in this
+    /// file, so it mints the *existing* `UserConsent` rather than introducing a
+    /// fourth `DestructiveWriteConsent` conformer. AGENTS.md names that as the
+    /// remaining escape hatch in the design; smart-TV support did not need it.
+    private func confirmTV(
+        _ write: TVWrite, hazard: String, on device: TVDevice, origin: AutomationOrigin
+    ) -> UserConsent? {
+        guard !isConfirming else { return nil }
+        isConfirming = true
+        defer { isConfirming = false }
+
+        let source = Self.label(for: origin)
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = String(localized: "Allow \(source) to change \(device.name)?")
+        let value: String
+        switch write.value {
+        case .percent(let percent): value = "\(Self.wholePercent(percent))%"
+        case .flag(let flag): value = flag ? String(localized: "on") : String(localized: "off")
+        case .code(let code): value = code
+        }
+        let asked = String(
+            localized: "\(source) asked Crisp to set \(write.feature.spec.title.lowercased()) to \(value)."
+        )
+        alert.informativeText = asked + "\n\n" + hazard
+        alert.addButton(withTitle: String(localized: "Allow"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        alert.buttons.last?.keyEquivalent = "\r"
+        alert.buttons.first?.keyEquivalent = ""
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return UserConsent()
     }
 
     /// Applies a stored preset.

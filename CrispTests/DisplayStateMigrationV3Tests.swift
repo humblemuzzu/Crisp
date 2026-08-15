@@ -39,7 +39,7 @@ final class DisplayStateMigrationV3Tests: XCTestCase {
 
         let upgraded = DisplayStateMigration.upgraded(decoded)
 
-        XCTAssertEqual(upgraded.version, 3)
+        XCTAssertEqual(upgraded.version, DisplayStateDocument.currentVersion)
         XCTAssertEqual(upgraded.displays[uuidA]?.brightness, 12)
         XCTAssertEqual(upgraded.displays[uuidA]?.contrast, 50)
         XCTAssertEqual(upgraded.displays[uuidA]?.input, 19)
@@ -71,7 +71,7 @@ final class DisplayStateMigrationV3Tests: XCTestCase {
         let twice = DisplayStateMigration.upgraded(once)
 
         XCTAssertEqual(twice, once)
-        XCTAssertEqual(once.version, 3)
+        XCTAssertEqual(once.version, DisplayStateDocument.currentVersion)
         XCTAssertEqual(once.groups.count, 1)
         XCTAssertEqual(once.presets.count, 1)
         XCTAssertEqual(once.schedules.count, 1)
@@ -100,7 +100,7 @@ final class DisplayStateMigrationV3Tests: XCTestCase {
         let folded = DisplayStateMigration.migrated(legacy: legacy, into: DisplayStateDocument(version: 1))
         let upgraded = DisplayStateMigration.upgraded(folded)
 
-        XCTAssertEqual(upgraded.version, 3)
+        XCTAssertEqual(upgraded.version, DisplayStateDocument.currentVersion)
         XCTAssertEqual(upgraded.displays[uuidA]?.brightness, 72)
         XCTAssertEqual(upgraded.displays[uuidA]?.volumeCapable, true)
     }

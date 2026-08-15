@@ -28,6 +28,10 @@ tracks it and adds:
   monitors (relative by default, because two panels' percentages are not
   comparable), named snapshots of brightness/contrast/volume, and time-triggered
   application that survives sleep. See `docs/groups-presets-schedules.md`.
+- **Smart-TV control over the LAN** (LG webOS, Samsung Tizen) — the one display
+  class with no DDC/CI at all. Pure networking, no private frameworks, opt-in.
+  See `docs/smart-tv.md`; HDMI-CEC is explicitly not part of it and that file
+  says why.
 
 Everything added lives on the `benq-ddc` branch. See
 `docs/fork-ddc-features.md` for the feature-level documentation.
@@ -107,11 +111,18 @@ These are not style preferences; they are the reason this repo exists.
 
 Rules 1, 2 and 5 are **machine-enforced**, so they no longer depend on anyone
 remembering them: `make boundaries` (`scripts/check-boundaries.sh`) fails on a
-private framework entering the DDC path or an AppKit/SwiftUI import in
-`Crisp/Models`, and `make compile STRICT=1` fails on any warning. CI runs both
-on every push and pull request. Rules 3 and 4 remain review-enforced: they are
-behavioural, and the unit suite (`make test`) covers the parts that can be
-tested headlessly.
+private framework entering the DDC path, an AppKit/SwiftUI import in
+`Crisp/Models`, or an entitlement that is not on its pinned list, and
+`make compile STRICT=1` fails on any warning. CI runs both on every push and
+pull request. Rules 3 and 4 remain review-enforced: they are behavioural, and
+the unit suite (`make test`) covers the parts that can be tested headlessly.
+
+The entitlement gate arrived with smart-TV support, which added the app's first
+capability that reaches off this machine (`com.apple.security.network.client`).
+The risk was never that entitlement; it is the next one, added in a diff about
+something else, in a file nobody re-reads. Two absences it defends are
+load-bearing: no `network.server` (Crisp binds no port — `docs/automation.md`
+says why) and no `device.*`/`files.*` TCC prompts.
 
 1. **The DDC path never touches private frameworks.** No `SkyLight`,
    `CoreBrightness`, `CoreDisplay`, `DisplayServices`, `OSD`, `BezelServices`,
@@ -183,8 +194,20 @@ tested headlessly.
 | Executing an automation request; the one confirmation dialog | `Crisp/Services/AutomationService.swift` |
 | Shortcuts (App Intents) entity, query and the six intents | `Crisp/Intents/` |
 | Global hotkeys (Carbon, no Accessibility grant) | `Crisp/Models/HotkeyBinding.swift`, `Crisp/Services/HotkeyService.swift`, `Crisp/Views/HotkeyRecorderView.swift` |
+| **What a TV platform can reach, and what it costs to get wrong** | `Crisp/Models/TVDevice.swift` |
+| The TV wire seam (frames in, frames out) | `Crisp/Models/TVTransport.swift` |
+| **LG SSAP: envelope, id correlation, pairing, the backlight round trip** | `Crisp/Models/WebOSProtocol.swift` |
+| **Tizen: detection, both token locations, keys, the rate limit, UPnP volume** | `Crisp/Models/TizenProtocol.swift` |
+| **TLS trust-on-first-use for the TVs' self-signed certificates** | `Crisp/Models/TVTrust.swift` |
+| **What automation may ask a TV for, and the destructive rule** | `Crisp/Models/TVAction.swift` |
+| TV sockets | `Crisp/Services/TVWebSocketTransport.swift` |
+| One TV conversation, shared with `crispctl` | `Crisp/Services/TVConversation.swift` |
+| TV list, display binding, backlight coalescing | `Crisp/Services/TVDeviceService.swift` |
+| TV credentials + the pinned certificate (Keychain) | `Crisp/Services/TVCredentialStore.swift` |
+| SSDP discovery, opt-in only | `Crisp/Services/TVDiscoveryService.swift` |
+| TV panel section and pairing UI | `Crisp/Views/TVDevicesView.swift` |
 | Packaging | `scripts/make-app.sh` |
-| Architecture gates (§3.1, §3.6) | `scripts/check-boundaries.sh` |
+| Architecture gates (§3.1, §3.6, entitlements) | `scripts/check-boundaries.sh` |
 | Accessibility gate (named controls, window identifiers) | `scripts/check-accessibility.sh`, findings in `reference/accessibility.md` |
 | Test runner (preflight + suite) | `scripts/run-tests.sh`, target list in `project.yml` |
 
@@ -220,6 +243,7 @@ and `dev.sh` handle this; do not bypass with plain ad-hoc signing.
 ./crispctl-bin list                      # enumerate displays + DDC values
 ./crispctl-bin get brightness            # read
 ./crispctl-bin set contrast 48           # write (use small deltas; restore after)
+./crispctl-bin tv list                   # paired TVs + what each platform can reach
 ```
 
 DDC writes are safe to test: the monitor ack's and reads back. Avoid
@@ -323,7 +347,39 @@ event tap armed` once granted, and `brightness key: adjusting external display
   schedule costs that schedule rather than quarantining the whole document.
 - **There is deliberately no HTTP server or local socket.** BetterDisplay binds
   `localhost:55777`; the argument for not doing so is written down in
-  `docs/automation.md` rather than left as an omission.
+  `docs/automation.md` rather than left as an omission. The absence of
+  `com.apple.security.network.server` from the entitlements is now that argument
+  in a form the boundary gate enforces.
+- **Smart TVs are supported over the LAN, and nothing about them was verified on
+  hardware.** There was no television on the network when it was written: the
+  protocol work sits above a `TVTransport` seam and is exercised headlessly
+  against `FakeTVTransport`, which is the whole of the verification. Four
+  properties are worth knowing without reading `docs/smart-tv.md`:
+  - **Tizen has no remote brightness command at all.** Not "unimplemented" —
+    Samsung's brightness API runs *on* the TV, and the UPnP variables died with
+    pre-2016 models. The panel shows a disabled slider with the reason next to
+    it, automation refuses with the same sentence, and
+    `BrightnessRung.resolve(tv: .tizen, isReachable:)` answers
+    `.unavailable(reason: .tvBrightnessNotRemote)`. Volume, power and input still
+    work. Samsung's *current input* is likewise unreadable locally and is
+    reported as unknown rather than guessed.
+  - **The ladder gained `.tvNetwork` between DDC and gamma**, and a display with
+    no TV bound to it carries `tvBacklightReachable: nil` and takes exactly the
+    branches it always did. No behaviour change for a DDC monitor.
+  - **Credentials are Keychain-only.** `TVDevice` has no field that could hold
+    the webOS client key or the Tizen token, so `displays.json` physically cannot
+    carry one; `TVPersistenceTests` searches the encoded document to prove it.
+    The TLS certificate is pinned on first use and a mismatch **refuses** — never
+    a silent re-pin, which would be the same as not checking.
+  - **TV power-off and input reuse the existing destructive gate.** Same
+    `Authorization`, same `UserConfirmation`, and deliberately **no fourth
+    `DestructiveWriteConsent` conformer**: the panel goes through the app's one
+    alert (`PanelConfirmation`) and automation through the same `NSAlert`
+    (`AutomationService.UserConsent`).
+- **HDMI-CEC is not a missing feature, it is a closed question.** macOS has no
+  public CEC API, the DPCD tunnelling registers are unreachable from user space,
+  and the CEC command set contains no brightness command at all. There is no stub
+  for it on purpose (`docs/smart-tv.md` §1).
 - The user runs BetterDisplay-free now; if it ever returns, this fork must not
   fight it (both write the same DDC registers; last writer wins).
 

@@ -140,9 +140,100 @@ final class BrightnessRungTests: XCTestCase {
     /// rungs, which would disable the slider on every DisplayLink dock.
     func testOnlyUnavailableDisablesTheControl() {
         XCTAssertTrue(BrightnessRung.ddcHardware.isControllable)
+        XCTAssertTrue(BrightnessRung.tvNetwork(reason: .tvHasNoDDC).isControllable)
         XCTAssertTrue(BrightnessRung.gammaTable(reason: .noDDCChannel).isControllable)
         XCTAssertTrue(BrightnessRung.overlay(reason: .virtualDisplay).isControllable)
         XCTAssertFalse(BrightnessRung.unavailable(reason: .displayOffline).isControllable)
+    }
+
+    // MARK: - The smart-TV rung
+
+    /// A desk with no television resolves exactly as it always did. This is the
+    /// no-behaviour-change assertion, and it is first because it is the one that
+    /// matters to the person whose BenQ is plugged in right now.
+    /// Kills mutation: defaulting `tvBacklightReachable` to `true` or `false`
+    /// rather than `nil`, either of which would move every existing display on to
+    /// or off the new rung.
+    func testADisplayWithNoTVBoundResolvesExactlyAsBefore() {
+        XCTAssertEqual(BrightnessRung.resolve(.init(ddcAvailable: true)), .ddcHardware)
+        XCTAssertEqual(
+            BrightnessRung.resolve(.init(ddcAvailable: false)),
+            .gammaTable(reason: .noDDCChannel)
+        )
+    }
+
+    /// A TV bound to a display with no DDC channel is dimmed over the network,
+    /// not with the GPU's colour table.
+    /// Kills mutation: dropping the TV branch, which sends a television that can
+    /// move its own backlight to software dimming instead.
+    func testABoundReachableTVTakesTheNetworkRungInsteadOfGamma() {
+        let rung = BrightnessRung.resolve(.init(ddcAvailable: false, tvBacklightReachable: true))
+        XCTAssertEqual(rung, .tvNetwork(reason: .tvHasNoDDC))
+        XCTAssertTrue(rung.movesBacklight, "this really is the panel's backlight")
+    }
+
+    /// DDC still wins. The cable needs no pairing and works when the network does
+    /// not, so a display that answers DDC keeps using it.
+    /// Kills mutation: testing the TV branch before the DDC one, which would move
+    /// a monitor that has a working I²C channel on to a network round trip.
+    func testDDCOutranksTheNetworkRung() {
+        XCTAssertEqual(
+            BrightnessRung.resolve(.init(ddcAvailable: true, tvBacklightReachable: true)),
+            .ddcHardware
+        )
+    }
+
+    /// A bound TV that cannot move its backlight (a Samsung, or one that is off)
+    /// falls through to the software rungs as before — because a television that
+    /// is also one of the Mac's screens really can still be gamma-dimmed.
+    /// Kills mutation: returning `.unavailable` here, which would take away a
+    /// dimmer that works from a screen the user is looking at.
+    func testAnUnreachableTVFallsThroughToGammaForAnAttachedDisplay() {
+        XCTAssertEqual(
+            BrightnessRung.resolve(.init(ddcAvailable: false, tvBacklightReachable: false)),
+            .gammaTable(reason: .noDDCChannel)
+        )
+    }
+
+    /// **The Tizen answer, as a device rather than a screen.** A Samsung TV on the
+    /// LAN reports brightness as unavailable *with the reason*, and the reason is
+    /// the same sentence its own disabled control shows.
+    /// Kills mutation: reporting `.tvNetwork` for Tizen, which would give the user
+    /// a slider that moves and a picture that does not.
+    func testATizenTVReportsBrightnessUnavailableWithItsReason() {
+        let rung = BrightnessRung.resolve(tv: .tizen, isReachable: true)
+        XCTAssertEqual(rung, .unavailable(reason: .tvBrightnessNotRemote))
+        XCTAssertFalse(rung.isControllable)
+        XCTAssertEqual(rung.reason?.text, TVUnsupportedReason.tizenHasNoRemoteBrightness.text)
+    }
+
+    /// A TV that is merely switched off is a different answer from one that
+    /// cannot do brightness at all: only one of the two is fixed by pressing a
+    /// button on a remote.
+    /// Kills mutation: collapsing the two into one reason, which would tell the
+    /// owner of an LG that their TV has no brightness command.
+    func testAnOfflineLGIsUnreachableRatherThanUnsupported() {
+        XCTAssertEqual(
+            BrightnessRung.resolve(tv: .webOS, isReachable: false),
+            .unavailable(reason: .tvUnreachable)
+        )
+        XCTAssertEqual(
+            BrightnessRung.resolve(tv: .webOS, isReachable: true),
+            .tvNetwork(reason: .tvHasNoDDC)
+        )
+    }
+
+    /// The badge's colour and the diagnostics report both key off "does this move
+    /// real light output", so it has to be right for all five rungs.
+    /// Kills mutation: reporting the software rungs as backlight movers, which
+    /// would make the badge claim a backlight that is not moving — the exact lie
+    /// the whole ladder exists to stop.
+    func testOnlyTheHardwareRungsClaimToMoveTheBacklight() {
+        XCTAssertTrue(BrightnessRung.ddcHardware.movesBacklight)
+        XCTAssertTrue(BrightnessRung.tvNetwork(reason: .tvHasNoDDC).movesBacklight)
+        XCTAssertFalse(BrightnessRung.gammaTable(reason: .noDDCChannel).movesBacklight)
+        XCTAssertFalse(BrightnessRung.overlay(reason: .gammaRejected).movesBacklight)
+        XCTAssertFalse(BrightnessRung.unavailable(reason: .displayOffline).movesBacklight)
     }
 
     // MARK: - Reasons are user-presentable
@@ -153,7 +244,8 @@ final class BrightnessRungTests: XCTestCase {
     func testEveryReasonHasUserPresentableProse() {
         let reasons: [BrightnessRung.Reason] = [
             .noDDCChannel, .hdrIgnoresDDC, .virtualDisplay,
-            .gammaRejected, .notDrawable, .displayOffline
+            .gammaRejected, .notDrawable, .displayOffline,
+            .tvHasNoDDC, .tvBrightnessNotRemote, .tvUnreachable
         ]
         for reason in reasons {
             let text = reason.text
