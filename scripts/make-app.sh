@@ -42,6 +42,14 @@ cp Crisp/Assets.xcassets/AppIcon.appiconset/icon_512.png "$ICONSET/icon_512x512.
 cp Crisp/Assets.xcassets/AppIcon.appiconset/icon_1024.png "$ICONSET/icon_512x512@2x.png"
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 
+# Monitor quirks database. Copied as a directory, not flattened: the loader
+# looks for Contents/Resources/quirks/*.json (MonitorQuirksService). Missing
+# files are not fatal — the app falls back to MCCS defaults — so this stays a
+# plain copy with no verification step.
+cp -R Crisp/Resources/quirks "$APP/Contents/Resources/quirks"
+# The contributor guide is documentation, not a resource the app reads.
+rm -f "$APP/Contents/Resources/quirks/README.md"
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

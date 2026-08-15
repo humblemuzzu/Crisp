@@ -18,6 +18,11 @@ targets:
       - path: Crisp
         excludes:
           - "**/*.md"
+          # Added back below as a folder reference so the JSON keeps its
+          # directory inside Contents/Resources (see MonitorQuirksService).
+          - "Resources/quirks"
+      - path: Crisp/Resources/quirks
+        type: folder
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.crisp.app
@@ -62,7 +67,14 @@ targets:
       # AppKit's terminate notification only, so it stays headless.
       - path: Crisp/Services/DisplayStateStore.swift
       - path: Crisp/Models/CombinedBrightness.swift
+      # The brightness fallback ladder's decision core (BrightnessRungTests).
+      # Foundation only: the AppKit overlay window lives elsewhere.
+      - path: Crisp/Models/BrightnessRung.swift
       - path: Crisp/Models/VariableRefreshModes.swift
+      # The monitor quirks decision core (decode / merge / resolve),
+      # Foundation only. Its bundle-lookup half, Services/MonitorQuirksService.swift,
+      # deliberately stays out of the test target: it holds no decisions.
+      - path: Crisp/Models/MonitorQuirks.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.crisp.tests

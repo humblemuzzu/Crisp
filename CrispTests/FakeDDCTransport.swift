@@ -105,6 +105,26 @@ final class FakeDDCTransport: DDCTransport, @unchecked Sendable {
 
     // MARK: - DDCTransport
 
+    /// Chip addresses this fake reports per display, standing in for what the real
+    /// transport discovers in the IORegistry. Unset displays answer at the standard
+    /// address, so existing tests are unaffected.
+    ///
+    /// Unlike `IOKitDDCTransport`, this fake answers on whatever address it is handed
+    /// and records it: it has no channel cache to go stale, so there is nothing to
+    /// re-resolve, and recording the requested address is what lets the tests below pin
+    /// that the protocol layer passes the transport's own answer straight through.
+    private var chipAddresses: [CGDirectDisplayID: UInt8] = [:]
+
+    /// Scripts a display as sitting behind an MCDP2900-converted HDMI port (or any other
+    /// non-standard chip address).
+    func setChipAddress(_ chipAddress: UInt8, displayID: CGDirectDisplayID) {
+        chipAddresses[displayID] = chipAddress
+    }
+
+    func chipAddress(for displayID: CGDirectDisplayID) -> UInt8 {
+        chipAddresses[displayID] ?? DDCPacket.displayChipAddress
+    }
+
     func send(_ frame: [UInt8], to displayID: CGDirectDisplayID, chipAddress: UInt8) -> Bool {
         sentFrames.append(Frame(displayID: displayID, chipAddress: chipAddress, bytes: frame))
         guard frame.count >= 7 else { return false }

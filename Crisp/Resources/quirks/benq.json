@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "vendor": "0x09D1",
+  "vendorName": "BenQ",
+  "models": [
+    {
+      "product": "0x8075",
+      "name": "MA320U",
+      "confidence": "verified",
+      "notes": "Verified live on macOS 26 / Apple M4 Pro over DisplayPort 1.4. Ranges and write behaviour come from crispctl reads and write-verified round trips (see reference/benq-ma320u.md). The input mapping below is NOT verified.",
+      "features": {
+        "brightness": {
+          "range": [0, 100],
+          "confidence": "verified"
+        },
+        "contrast": {
+          "range": [0, 100],
+          "confidence": "verified"
+        },
+        "volume": {
+          "range": [0, 50],
+          "confidence": "verified"
+        },
+        "input": {
+          "confidence": "reported",
+          "complete": false,
+          "notes": "The panel has USB-C, DisplayPort, HDMI-1 and HDMI-2. Only one code is known, so this list is deliberately NOT complete and the app keeps offering the generic VESA codes alongside it.",
+          "values": [
+            {
+              "code": 19,
+              "label": "USB-C",
+              "confidence": "reported",
+              "notes": "UNCONFIRMED. The panel reports current input source 19, which is not a meaningful VESA MCCS code (0x13 would be 'DVI-10' and this monitor has no DVI). The Mac is attached over the USB-C port, so 19 is very likely USB-C, but nobody has switched away and back to prove it. Kept at 'reported' on purpose: the app shows it as 'USB-C?' and asks before writing it. Do not promote to 'verified' without doing the calibration in README.md."
+            }
+          ]
+        }
+      },
+      "workarounds": {
+        "writeDelayMs": null,
+        "saveAfterWrite": false,
+        "revertsAfterWrite": false,
+        "reportsUnsupportedAsSupported": false
+      }
+    }
+  ]
+}

@@ -40,6 +40,29 @@ final class DDCFeatureService: ObservableObject {
     /// Latest pending contrast percent per display; one DDC write in flight each.
     private var pendingContrast: [CGDirectDisplayID: Double] = [:]
     private var contrastPumpActive: Set<CGDirectDisplayID> = []
+    /// Quirk row for each connected display, captured on probe. Cached here
+    /// because the write pump only has a `CGDirectDisplayID` to work from, and
+    /// because the lookup answer cannot change while a display stays connected.
+    private var quirksByDisplay: [CGDirectDisplayID: MonitorQuirks] = [:]
+
+    /// MCCS's recommended spacing between consecutive writes, used unless a
+    /// monitor's quirk row says it needs more.
+    private static let standardWriteDelayMs = 50
+
+    /// The pump's inter-write pause in nanoseconds, computed without trapping.
+    ///
+    /// `delayMs` originates in a contributed JSON file, and `UInt64(ms) *
+    /// 1_000_000` traps on overflow: a units mix-up in a pull request would take
+    /// the app down the first time that monitor's pump ran. Anything that will
+    /// not convert degrades to the MCCS spacing instead. Belt and braces — the
+    /// decoder already refuses values outside `1...maxWriteDelayMs` — because
+    /// only one of the two has to hold for the app to stay up.
+    private static func writeDelayNanoseconds(_ delayMs: Int) -> UInt64 {
+        let standard = UInt64(standardWriteDelayMs) * 1_000_000
+        guard let ms = UInt64(exactly: delayMs) else { return standard }
+        let (nanoseconds, overflow) = ms.multipliedReportingOverflow(by: 1_000_000)
+        return overflow ? standard : nanoseconds
+    }
 
     // MARK: - Persistence (per displayUUID)
 
@@ -89,6 +112,33 @@ final class DDCFeatureService: ObservableObject {
         contrastMax.removeValue(forKey: displayID)
         pendingContrast.removeValue(forKey: displayID)
         contrastPumpActive.remove(displayID)
+        quirksByDisplay.removeValue(forKey: displayID)
+    }
+
+    // MARK: - Quirks
+
+    /// The shipped quirk row for this monitor, or `nil` for a model nobody has
+    /// contributed yet — in which case every call site falls back to what the
+    /// monitor reports and then to the MCCS defaults, exactly as before.
+    @discardableResult
+    private func quirks(for display: DisplayInfo) -> MonitorQuirks? {
+        let quirks = MonitorQuirksService.shared.quirks(
+            vendor: display.vendorNumber, product: display.modelNumber
+        )
+        quirksByDisplay[display.displayID] = quirks
+        return quirks
+    }
+
+    /// Raw contrast range to write into, resolved database → probe → MCCS.
+    /// The database outranks the probe deliberately: a monitor that misreports
+    /// its own maximum is the reason the database exists.
+    private func contrastRange(for id: CGDirectDisplayID) -> QuirkRange {
+        MonitorQuirkResolver.range(
+            .contrast,
+            quirks: quirksByDisplay[id],
+            probeMax: contrastMax[id],
+            standard: .mccsPercent
+        ).value
     }
 
     // MARK: - Contrast
@@ -99,6 +149,7 @@ final class DDCFeatureService: ObservableObject {
     func refreshContrast(for display: DisplayInfo) {
         guard !display.isBuiltin else { return }
         let id = display.displayID
+        quirks(for: display)
         DDCService.shared.readAsync(displayID: id, command: DDCService.contrastVCP) { result in
             Task { @MainActor in
                 guard let result, result.max > 0 else { return }
@@ -107,7 +158,7 @@ final class DDCFeatureService: ObservableObject {
                 // Adopt hardware level only while our writer is idle, so a stale
                 // cached read never fights an in-flight drag.
                 if self.pendingContrast[id] == nil, !self.contrastPumpActive.contains(id) {
-                    display.contrast = Double(result.current) / Double(result.max) * 100.0
+                    display.contrast = self.contrastRange(for: id).percent(forRaw: result.current)
                 }
             }
         }
@@ -132,10 +183,14 @@ final class DDCFeatureService: ObservableObject {
     private func pumpContrast(for id: CGDirectDisplayID) {
         guard !contrastPumpActive.contains(id), let percent = pendingContrast.removeValue(forKey: id) else { return }
         contrastPumpActive.insert(id)
-        let raw = UInt16((percent / 100.0 * Double(contrastMax[id] ?? 100)).rounded())
+        let raw = contrastRange(for: id).raw(forPercent: percent)
+        // Monitors that need more than the MCCS spacing say so in their quirk row.
+        let delayMs = MonitorQuirkResolver.writeDelayMs(
+            quirks: quirksByDisplay[id], standard: Self.standardWriteDelayMs
+        )
         DDCService.shared.writeAsync(displayID: id, command: DDCService.contrastVCP, value: raw) { _ in
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 50_000_000)  // MCCS write spacing
+                try? await Task.sleep(nanoseconds: Self.writeDelayNanoseconds(delayMs))
                 self.contrastPumpActive.remove(id)
                 self.pumpContrast(for: id)
             }
@@ -149,6 +204,7 @@ final class DDCFeatureService: ObservableObject {
     func refreshInputSource(for display: DisplayInfo) {
         guard !display.isBuiltin else { return }
         let id = display.displayID
+        quirks(for: display)
         DDCService.shared.readAsync(displayID: id, command: 0x60) { result in
             Task { @MainActor in
                 guard let result, result.max > 0 || result.current > 0 else { return }
@@ -160,13 +216,31 @@ final class DDCFeatureService: ObservableObject {
     }
 
     /// Switches the monitor's input. Raw VCP 0x60 value; labels live in
-    /// inputLabel(for:). Not re-applied on reconnect unless the per-display
-    /// "reapply input" toggle is on (stale codes blank the screen).
+    /// `resolvedInput(_:for:)`. Not re-applied on reconnect unless the
+    /// per-display "reapply input" toggle is on (stale codes blank the screen).
+    ///
+    /// The confirmation gate is the *caller's* job (see `InputSourceMenuRow`):
+    /// this method is also how a confirmed switch is finally performed, so it
+    /// cannot refuse unverified codes itself. Saving the code as the user's own
+    /// choice is what later promotes it to the user-override tier — a code the
+    /// user picked and whose screen came back is the best evidence there is.
+    ///
+    /// Which is why nothing is recorded until the monitor acks the write. A
+    /// transient I²C failure must not promote an unverified code to the
+    /// no-confirmation tier for every future selection and for the opt-in
+    /// reapply-on-reconnect path: that would be evidence the app invented.
     func setInputSource(_ value: UInt16, for display: DisplayInfo) {
         guard display.inputSourceSupported else { return }
-        display.inputSource = value
-        store.update(display.stateUUID) { $0.input = value }
-        DDCService.shared.writeAsync(displayID: display.displayID, command: 0x60, value: value)
+        let uuid = display.stateUUID
+        DDCService.shared.writeAsync(displayID: display.displayID, command: 0x60, value: value) { acked in
+            guard acked else { return }
+            Task { @MainActor in
+                // `inputSource` feeds `MonitorQuirkResolver.input`'s "the monitor
+                // is on this right now" tier, so it moves on the same evidence.
+                display.inputSource = value
+                self.store.update(uuid) { $0.input = value }
+            }
+        }
     }
 
     // MARK: - Reconnect re-application
@@ -196,38 +270,36 @@ final class DDCFeatureService: ObservableObject {
         }
     }
 
-    // MARK: - Input labels (VESA MCCS 0x60 value table)
+    // MARK: - Input labels
 
-    static func inputLabel(for value: UInt16) -> String {
-        switch value {
-        case 0x01: return "VGA-1"
-        case 0x02: return "VGA-2"
-        case 0x03: return "DVI-1"
-        case 0x04: return "DVI-2"
-        case 0x05: return "Composite-1"
-        case 0x06: return "Composite-2"
-        case 0x07: return "S-Video-1"
-        case 0x08: return "S-Video-2"
-        case 0x09: return "Tuner-1"
-        case 0x0A: return "Tuner-2"
-        case 0x0B: return "Tuner-3"
-        case 0x0C...0x13: return "DVI-\(value - 0x0C + 3)"
-        case 0x14...0x1D: return "DisplayPort-\(value - 0x14 + 1)"
-        case 0x20...0x2F: return "HDMI-\(value - 0x20 + 1)"
-        case 0x30...0x3F: return "USB-C-\(value - 0x30 + 1)"
-        default: return String(value)
-        }
+    /// Resolves one input code for this display: user override → quirks database
+    /// → live probe → MCCS table (`MonitorQuirkResolver.input`). The result
+    /// carries both the label and whether writing the code needs confirmation.
+    func resolvedInput(_ code: UInt16, for display: DisplayInfo) -> ResolvedInput {
+        MonitorQuirkResolver.input(
+            code: code,
+            quirks: quirks(for: display),
+            currentInput: display.inputSourceSupported ? display.inputSource : nil,
+            userSelectedInput: savedInput(for: display.stateUUID)
+        )
     }
 
-    /// The common inputs shown in the menu. The current code is always listed
-    /// first with its label so a monitor with a nonstandard code (several
-    /// BenQ models use their own numbering) is still selectable.
-    static func inputMenuItems(current: UInt16) -> [(value: UInt16, label: String)] {
-        var items: [(UInt16, String)] = [(current, inputLabel(for: current))]
-        let common: [UInt16] = [0x14, 0x15, 0x16, 0x17, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31]
-        for v in common where v != current {
-            items.append((v, inputLabel(for: v)))
-        }
-        return items
+    /// What the panel shows next to "Input Source". A label the database only
+    /// has second-hand keeps its question mark — the app never states a guess
+    /// as fact.
+    func inputLabel(for display: DisplayInfo) -> String {
+        resolvedInput(display.inputSource, for: display).displayLabel
+    }
+
+    /// The inputs offered in the menu. The current code is always first (always
+    /// selectable, since selecting it is a no-op); then whatever the database
+    /// knows about this exact model; and only for a monitor nobody has
+    /// contributed yet, the common VESA codes as a guess.
+    func inputOptions(for display: DisplayInfo) -> [ResolvedInput] {
+        MonitorQuirkResolver.inputOptions(
+            quirks: quirks(for: display),
+            currentInput: display.inputSource,
+            userSelectedInput: savedInput(for: display.stateUUID)
+        )
     }
 }

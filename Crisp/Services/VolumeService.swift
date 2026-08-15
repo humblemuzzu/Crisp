@@ -17,6 +17,23 @@ final class VolumeService: ObservableObject {
     private var ddcMax: [CGDirectDisplayID: UInt16] = [:]
     /// Volume to restore on unmute, captured when toggleMute drops to zero.
     private var preMuteVolume: [CGDirectDisplayID: Double] = [:]
+    /// Quirk row per connected display, captured on probe. Cached like
+    /// DDCFeatureService does for contrast, because the write pump only has a
+    /// `CGDirectDisplayID` to work from and the lookup answer cannot change
+    /// while a display stays connected.
+    private var quirksByDisplay: [CGDirectDisplayID: MonitorQuirks] = [:]
+
+    /// Raw volume range to write into, resolved database → live probe → MCCS —
+    /// the same order contrast uses. The database outranks the probe on purpose:
+    /// a monitor that misreports its own maximum is the reason it exists.
+    private func volumeRange(for id: CGDirectDisplayID) -> QuirkRange {
+        MonitorQuirkResolver.range(
+            .volume,
+            quirks: quirksByDisplay[id],
+            probeMax: ddcMax[id],
+            standard: .mccsPercent
+        ).value
+    }
 
     /// UUIDs of displays that have EVER answered a 0x62 read. VCP support is a
     /// hardware fact, so remember it: on flaky DDC (the wedged-read AOC) a
@@ -36,6 +53,7 @@ final class VolumeService: ObservableObject {
     func invalidate(for displayID: CGDirectDisplayID) {
         ddcMax.removeValue(forKey: displayID)
         preMuteVolume.removeValue(forKey: displayID)
+        quirksByDisplay.removeValue(forKey: displayID)
     }
 
     // MARK: - Probe
@@ -54,6 +72,9 @@ final class VolumeService: ObservableObject {
         }
         let id = display.displayID
         let uuid = display.stateUUID
+        quirksByDisplay[id] = MonitorQuirksService.shared.quirks(
+            vendor: display.vendorNumber, product: display.modelNumber
+        )
         DDCService.shared.readAsync(displayID: id, command: DDCService.volumeVCP) { result in
             Task { @MainActor in
                 guard let result else { return }
@@ -63,7 +84,7 @@ final class VolumeService: ObservableObject {
                 // Adopt the hardware level only while our writer is idle, so a
                 // stale cached read never fights an in-flight drag.
                 if self.pending[id] == nil, !self.pumpActive.contains(id) {
-                    display.volume = Double(result.current) / Double(result.max) * 100.0
+                    display.volume = self.volumeRange(for: id).percent(forRaw: result.current)
                 }
             }
         }
@@ -101,7 +122,7 @@ final class VolumeService: ObservableObject {
     private func pump(for id: CGDirectDisplayID) {
         guard !pumpActive.contains(id), let percent = pending.removeValue(forKey: id) else { return }
         pumpActive.insert(id)
-        let raw = UInt16((percent / 100.0 * Double(ddcMax[id] ?? 100)).rounded())
+        let raw = volumeRange(for: id).raw(forPercent: percent)
         DDCService.shared.writeAsync(displayID: id, command: DDCService.volumeVCP, value: raw) { _ in
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 50_000_000)  // MCCS write spacing

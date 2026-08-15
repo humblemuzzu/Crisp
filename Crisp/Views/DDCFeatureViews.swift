@@ -42,12 +42,20 @@ struct ContrastSliderView: View {
     }
 }
 
-/// DDC input-source selector (VCP 0x60). Shows the current input (raw code if
-/// the monitor uses nonstandard numbering) plus the common VESA inputs, and a
-/// per-display "reapply on reconnect" toggle (off by default — switching input
-/// blanks the screen, and a stale saved code can point at an empty port).
+/// DDC input-source selector (VCP 0x60). Shows the current input — labelled from
+/// the monitor quirks database where a human has mapped this model's codes, and
+/// otherwise from the VESA table or the raw code — plus a per-display "reapply on
+/// reconnect" toggle (off by default: switching input blanks the screen, and a
+/// stale saved code can point at an empty port).
+///
+/// Codes the app cannot vouch for are marked with a trailing "?" and require a
+/// confirmation before they are written. Being wrong here is expensive in a way
+/// no other DDC feature is: the panel switches to a port with nothing attached
+/// and the only way back is the monitor's own physical buttons.
 struct InputSourceMenuRow: View {
     @ObservedObject var display: DisplayInfo
+    /// Non-nil while an unverified input code is waiting for confirmation.
+    @State private var pendingInput: ResolvedInput?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,18 +64,18 @@ struct InputSourceMenuRow: View {
                 Text("Input Source")
                     .font(.body)
                 Spacer()
-                Text(DDCFeatureService.inputLabel(for: display.inputSource))
+                Text(DDCFeatureService.shared.inputLabel(for: display))
                     .font(.body)
                     .foregroundColor(.secondary)
                 Menu {
-                    ForEach(DDCFeatureService.inputMenuItems(current: display.inputSource), id: \.value) { item in
+                    ForEach(DDCFeatureService.shared.inputOptions(for: display), id: \.code) { option in
                         Button {
-                            DDCFeatureService.shared.setInputSource(item.value, for: display)
+                            select(option)
                         } label: {
-                            if item.value == display.inputSource {
-                                Label(item.label, systemImage: "checkmark")
+                            if option.code == display.inputSource {
+                                Label(option.displayLabel, systemImage: "checkmark")
                             } else {
-                                Text(item.label)
+                                Text(option.displayLabel)
                             }
                         }
                     }
@@ -96,5 +104,44 @@ struct InputSourceMenuRow: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 6)
         }
+        .alert(
+            "Switch input?",
+            isPresented: Binding(get: { pendingInput != nil }, set: { if !$0 { pendingInput = nil } }),
+            presenting: pendingInput
+        ) { input in
+            Button("Switch", role: .destructive) {
+                DDCFeatureService.shared.setInputSource(input.code, for: display)
+                pendingInput = nil
+            }
+            Button("Cancel", role: .cancel) { pendingInput = nil }
+        } message: { input in
+            Text(confirmationMessage(for: input))
+        }
+    }
+
+    /// Applies a verified code straight away; anything else asks first.
+    ///
+    /// "Verified" means the user already chose this code themselves, or the
+    /// monitor is on it right now, or a human confirmed it on this model — see
+    /// `MonitorQuirkResolver.input`. A label that merely came from a `reported`
+    /// database entry or from the generic VESA table is a guess, and this is the
+    /// one DDC write the user cannot undo from the Mac.
+    private func select(_ option: ResolvedInput) {
+        if option.needsConfirmation {
+            pendingInput = option
+        } else {
+            DDCFeatureService.shared.setInputSource(option.code, for: display)
+        }
+    }
+
+    private func confirmationMessage(for input: ResolvedInput) -> String {
+        // One-line literal on purpose: a multi-line literal's extracted key
+        // depends on where the continuations fall, and the catalog key has to be
+        // something a translator can find by searching for it.
+        // `displayLabel` is a String, so this extracts as a %@ specifier; a raw
+        // UInt16 would generate a numeric key that never matches the catalog.
+        let warning = String(localized: "Input \(input.displayLabel) is not confirmed on this monitor. If nothing is attached to it the screen goes blank, and the only way back is the monitor's own buttons.")
+        // The contributor's note, when there is one, says *why* it is unconfirmed.
+        return input.notes.map { "\(warning)\n\n\($0)" } ?? warning
     }
 }

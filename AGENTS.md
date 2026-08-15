@@ -190,10 +190,16 @@ event tap armed` once granted, and `brightness key: adjusting external display
   brightness/contrast/volume reads and writes, input-source no-op write,
   reconnect reapply logic, contrast/volume/key persistence.
 - **Input labels are uncalibrated for this monitor.** The MA320U reports
-  current input `19`, which is not a standard VESA code — the menu shows raw
-  codes for unknown values. Calibrating the mapping for a monitor = note the
-  value that corresponds to each physical port (switch via OSD or by
-  selecting, observe which input becomes active). Do not guess.
+  current input `19`, which is not a standard VESA code. Labels now come from
+  the monitor quirks database (`Crisp/Resources/quirks/`), falling back to the
+  VESA MCCS table and then to the raw code; anything the database has not had
+  confirmed on real hardware is shown with a trailing `?`, and switching to a
+  code that is neither `verified` nor one the user already picked (nor the one
+  the monitor is on right now) requires a confirmation dialog first. The
+  MA320U's `19` is in the database as `USB-C?` — `reported`, inferred from the
+  cable, not measured. Calibrating the mapping for a monitor = note the value
+  that corresponds to each physical port (switch via the monitor's OSD, then
+  re-read, so you never write `0x60` blind). Do not guess.
 - **Reconnect reapply of input is opt-in per display and off by default.**
 - The user runs BetterDisplay-free now; if it ever returns, this fork must not
   fight it (both write the same DDC registers; last writer wins).

@@ -16,6 +16,12 @@ class DisplayInfo: ObservableObject, Identifiable {
     @Published var pixelWidth: Int
     @Published var pixelHeight: Int
     @Published var brightness: Double
+    /// Which mechanism is actually dimming this display (DDC hardware, gamma
+    /// table, overlay, or nothing at all). Resolved by BrightnessService, which
+    /// owns every input it is derived from, and rendered as the slider's badge.
+    /// Starts at hardware because that is what the write path aims at until a
+    /// DDC write has actually failed.
+    @Published var brightnessRung: BrightnessRung = .ddcHardware
     /// UI brightness ceiling. 100 normally; above 100 while Extra Brightness
     /// (EDR upscaling) is enabled, where the range 100...maxBrightness maps to
     /// the EDR overlay boost instead of hardware.

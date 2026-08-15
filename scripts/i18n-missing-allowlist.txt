@@ -3,3 +3,11 @@
 # fail the build, everything else missing does. One key per line, exactly as
 # extracted (leading spaces and format specifiers matter). Remove entries as
 # the gaps get fixed; the checker flags stale entries.
+
+# The fork's DDC input-source UI (Crisp/Views/DDCFeatureViews.swift). English
+# only for now; the first three predate the monitor quirks database.
+Input Source
+Reapply input on reconnect
+Switch input?
+Switch
+Input %@ is not confirmed on this monitor. If nothing is attached to it the screen goes blank, and the only way back is the monitor's own buttons.

@@ -1153,6 +1153,9 @@
         }
       }
     },
+    "macOS is not rendering to this display, so Crisp has no way to dim it." : {
+
+    },
     "Main" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1371,6 +1374,9 @@
           }
         }
       }
+    },
+    "Overlay" : {
+
     },
     "Pause Adjustments" : {
       "localizations" : {
@@ -1802,6 +1808,24 @@
         }
       }
     },
+    "The built-in panel's own backlight, through IOKit." : {
+
+    },
+    "The monitor's own backlight, over DDC/CI." : {
+
+    },
+    "This display has no DDC channel on this connection, so Crisp dims the image with the GPU's color table instead of the backlight." : {
+
+    },
+    "This display is in HDR mode and ignores hardware brightness commands, so Crisp dims the image with the GPU's color table." : {
+
+    },
+    "This display is offline, so there is nothing to dim." : {
+
+    },
+    "This display refused the color-table write Crisp uses for software dimming, so Crisp dims it with an overlay." : {
+
+    },
     "This virtual display is currently active. Deleting it will disable it immediately." : {
       "localizations" : {
         "zh-Hans" : {
@@ -1843,6 +1867,9 @@
           }
         }
       }
+    },
+    "Unavailable" : {
+
     },
     "Update Available" : {
       "localizations" : {
@@ -1928,6 +1955,9 @@
           }
         }
       }
+    },
+    "Virtual, AirPlay and Sidecar screens have no backlight and no color table of their own, so Crisp dims them with an overlay." : {
+
     },
     "Virtual display options" : {
       "localizations" : {

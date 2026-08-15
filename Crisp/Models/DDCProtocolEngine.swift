@@ -15,10 +15,6 @@ import CoreGraphics
 /// single thread).
 final class DDCProtocolEngine: @unchecked Sendable {
     private let transport: DDCTransport
-    /// The I2C chip address every request goes to. A later phase selects 0xB7 per
-    /// display for MCDP2900-converted HDMI ports; the value already travels through
-    /// the seam so that change stays below this class.
-    private let chipAddress: UInt8
     /// Injected clock and sleep so the quarantine window and the retry backoff can be
     /// exercised without waiting for wall time.
     private let now: () -> Date
@@ -45,12 +41,10 @@ final class DDCProtocolEngine: @unchecked Sendable {
 
     init(
         transport: DDCTransport,
-        chipAddress: UInt8 = DDCPacket.displayChipAddress,
         now: @escaping () -> Date = Date.init,
         sleep: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
     ) {
         self.transport = transport
-        self.chipAddress = chipAddress
         self.now = now
         self.sleep = sleep
     }
@@ -58,11 +52,14 @@ final class DDCProtocolEngine: @unchecked Sendable {
     // MARK: - Single attempt
 
     /// One Set VCP transaction. True means the display acked it.
+    ///
+    /// The frame is the same bytes whatever the chip address: the address is I2C
+    /// addressing, outside the DDC/CI frame and therefore outside its checksum.
     func write(displayID: CGDirectDisplayID, command: UInt8, value: UInt16) -> Bool {
         transport.send(
             DDCPacket.setVCP(command: command, value: value),
             to: displayID,
-            chipAddress: chipAddress
+            chipAddress: transport.chipAddress(for: displayID)
         )
     }
 
@@ -79,7 +76,7 @@ final class DDCProtocolEngine: @unchecked Sendable {
             DDCPacket.getVCP(command: command),
             replyLength: DDCPacket.replyLength,
             from: displayID,
-            chipAddress: chipAddress,
+            chipAddress: transport.chipAddress(for: displayID),
             isValidReply: { DDCPacket.parseGetVCPReply($0, command: command) != nil }
         )
         let result = reply.flatMap { DDCPacket.parseGetVCPReply($0, command: command) }

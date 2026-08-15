@@ -270,6 +270,71 @@ final class BrightnessService: @unchecked Sendable {
     /// Used to denormalize 0–100% into the display's native DDC range.
     private var ddcMaxBrightness: [CGDirectDisplayID: UInt16] = [:]
 
+    /// Displays whose transfer-table write CoreGraphics rejected, i.e. where the
+    /// gamma rung does not exist either. Guarded by ddcAvailableLock, alongside
+    /// the other per-display capability facts the rung is derived from.
+    private var gammaRejected: Set<CGDirectDisplayID> = []
+
+    // MARK: - Brightness Rung (the fallback ladder)
+
+    /// Resolves which rung of the ladder a display is on, records it on the
+    /// DisplayInfo (the UI badge observes it), and returns it so the caller can
+    /// route its write to the matching mechanism.
+    ///
+    /// Every input comes from state this service (or the display itself) already
+    /// owns, so the badge cannot disagree with what the write path actually does.
+    @discardableResult
+    @MainActor
+    func refreshRung(for display: DisplayInfo) -> BrightnessRung {
+        let displayID = display.displayID
+        let (available, hdrDimmed, gammaOK) = ddcAvailableLock.withLock {
+            (ddcAvailable[displayID], hdrDimmedDisplays.contains(displayID), !gammaRejected.contains(displayID))
+        }
+        let rung = BrightnessRung.resolve(
+            BrightnessRung.Capabilities(
+                isOnline: CGDisplayIsOnline(displayID) != 0,
+                isBuiltin: display.isBuiltin,
+                isVirtual: VirtualDisplayService.shared.isVirtualDisplay(displayID),
+                ddcAvailable: available,
+                hdrSoftwareDimmed: hdrDimmed,
+                gammaWritable: gammaOK,
+                hasScreen: NSScreen.screen(for: displayID) != nil
+            )
+        )
+        if display.brightnessRung != rung { display.brightnessRung = rung }
+        // A display that climbed back off the overlay rung (HDR off, DDC proven,
+        // virtual display destroyed) must not keep a black window over it.
+        if case .overlay = rung {} else {
+            BrightnessOverlayManager.shared.removeOverlay(for: displayID)
+        }
+        return rung
+    }
+
+    /// Re-resolves the rung from a background callback (DDC write result, gamma
+    /// write result), where the DisplayInfo can only be reached on the main actor.
+    private func scheduleRungRefresh(for displayID: CGDirectDisplayID) {
+        Task { @MainActor [weak self] in
+            guard let self,
+                  let display = DisplayManagerAccessor.shared.displays.first(where: { $0.displayID == displayID })
+            else { return }
+            self.refreshRung(for: display)
+        }
+    }
+
+    /// Records whether CoreGraphics accepted a transfer-table write, so a display
+    /// that rejects gamma drops to the overlay rung instead of silently doing
+    /// nothing. Only a change is published; the write path calls this at drag rate.
+    private func noteGammaWriteResult(_ error: CGError, for displayID: CGDirectDisplayID) {
+        let rejected = error != .success
+        let changed = ddcAvailableLock.withLock { () -> Bool in
+            let wasRejected = gammaRejected.contains(displayID)
+            guard wasRejected != rejected else { return false }
+            if rejected { gammaRejected.insert(displayID) } else { gammaRejected.remove(displayID) }
+            return true
+        }
+        if changed { scheduleRungRefresh(for: displayID) }
+    }
+
     // MARK: - Public API
 
     /// `animated: true` glides the built-in slider to the freshly-read value
@@ -278,6 +343,9 @@ final class BrightnessService: @unchecked Sendable {
     /// should show the real value immediately.
     @MainActor
     func refreshBrightness(for display: DisplayInfo, animated: Bool = false) async {
+        // Recompute the ladder rung on every refresh (panel open, wake,
+        // reconfigure), so the badge tracks reality without a poll of its own.
+        let rung = refreshRung(for: display)
         // While boosted above 100 the hardware pins at max and reads back ~100;
         // adopting that would snap the slider out of the boost region. Crisp
         // owns the value while Extra Brightness is engaged.
@@ -308,14 +376,14 @@ final class BrightnessService: @unchecked Sendable {
                 }
             }
         } else {
-            // First check if DDC is already known to be unavailable; if so skip the
-            // async DDC call and just read the current gamma-derived brightness.
-            let knownUnavailable: Bool = ddcAvailableLock.withLock {
-                ddcAvailable[displayID] == false
-            }
-            if knownUnavailable {
-                // Can't read brightness from gamma tables meaningfully; leave value as-is
+            switch rung {
+            case .gammaTable, .overlay, .unavailable:
+                // Nothing to read back: gamma and the overlay have no register to
+                // report a value, and probing DDC on a display that has no channel
+                // (or none that works) only burns I2C timeouts. Leave the value as is.
                 return
+            case .ddcHardware:
+                break
             }
 
 
@@ -341,6 +409,9 @@ final class BrightnessService: @unchecked Sendable {
                     self.ddcAvailable[displayID] = true
                     self.ddcMaxBrightness[displayID] = result.max
                     self.ddcAvailableLock.unlock()
+                    // A first successful read is what promotes an unproven display
+                    // to a *proven* hardware rung; nothing else observes this.
+                    if firstRead { self.scheduleRungRefresh(for: displayID) }
                     Task { @MainActor in
                         // DDC reads quantize (many panels expose a coarser internal
                         // scale than they accept), so a value we just set can read back
@@ -421,16 +492,21 @@ final class BrightnessService: @unchecked Sendable {
             // monitor is in HDR mode up there anyway, so there is no hardware
             // write to make.
             if clamped <= 100 {
-                // Check current DDC availability status
-                let currentStatus: Bool? = ddcAvailableLock.withLock { ddcAvailable[displayID] }
-
-                if currentStatus == false {
-                    // DDC known unavailable, go straight to software fallback
+                // One choke point for "which mechanism dims this display": the
+                // same resolution the badge shows, so the two can never diverge.
+                switch refreshRung(for: display) {
+                case .ddcHardware:
+                    writeDDCBrightnessCoalesced(percent: hardware, for: displayID)
+                case .gammaTable:
                     queue.async { [weak self] in
                         self?.setSoftwareBrightness(hardware, for: displayID)
                     }
-                } else {
-                    writeDDCBrightnessCoalesced(percent: hardware, for: displayID)
+                case .overlay:
+                    BrightnessOverlayManager.shared.setBrightness(hardware, for: displayID)
+                case .unavailable:
+                    // Nothing can dim this display. The slider is disabled in the
+                    // UI; a stray key press must not pretend otherwise either.
+                    break
                 }
             }
         }
@@ -485,9 +561,15 @@ final class BrightnessService: @unchecked Sendable {
     private var hdrDimmedDisplays: Set<CGDirectDisplayID> = []
 
     func setHDRSoftwareDimming(_ on: Bool, for displayID: CGDirectDisplayID) {
-        ddcAvailableLock.withLock {
+        let changed = ddcAvailableLock.withLock { () -> Bool in
+            let was = hdrDimmedDisplays.contains(displayID)
+            guard was != on else { return false }
             if on { hdrDimmedDisplays.insert(displayID) } else { hdrDimmedDisplays.remove(displayID) }
+            return true
         }
+        // Entering/leaving HDR moves the display between the hardware and gamma
+        // rungs, which the badge has to follow.
+        if changed { scheduleRungRefresh(for: displayID) }
     }
 
     private func writeDDCBrightnessCoalesced(percent: Double, for displayID: CGDirectDisplayID) {
@@ -587,7 +669,13 @@ final class BrightnessService: @unchecked Sendable {
         ) { [weak self] success in
             guard let self else { return }
             if success {
-                self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = true }
+                let proved = self.ddcAvailableLock.withLock { () -> Bool in
+                    let was = self.ddcAvailable[displayID]
+                    self.ddcAvailable[displayID] = true
+                    return was != true
+                }
+                // Only on the transition: this closure runs on every write.
+                if proved { self.scheduleRungRefresh(for: displayID) }
                 self.ddcPumpLock.withLock { self.ddcFailStreak[displayID] = 0 }
             } else {
                 let streak = self.ddcPumpLock.withLock { () -> Int in
@@ -600,6 +688,8 @@ final class BrightnessService: @unchecked Sendable {
                 // Only give up on DDC after 3 consecutive failures.
                 if streak >= 3 {
                     self.ddcAvailableLock.withLock { self.ddcAvailable[displayID] = false }
+                    // The display just fell off the hardware rung; the badge says so.
+                    self.scheduleRungRefresh(for: displayID)
                     DispatchQueue.main.async { [weak self] in
                         self?.setSoftwareBrightness(percent, for: displayID)
                     }
@@ -660,36 +750,49 @@ final class BrightnessService: @unchecked Sendable {
                 BrightnessBoostService.shared.syncOverlay(for: display)
             }
         } else {
-            let currentStatus: Bool? = ddcAvailableLock.withLock { ddcAvailable[displayID] }
+            // Resolve the rung once, up front: the per-step closure runs at
+            // ~125Hz and must not re-derive it (nor touch the main actor's
+            // VirtualDisplayService) on every tick.
+            let rung = refreshRung(for: display)
+            // One animation, one per-step writer chosen by the rung. Above 100
+            // the boost sync owns the transfer table (see setBrightness), which
+            // is why every writer below is gated on value <= 100.
+            let applyStep: (Double) -> Void
+            switch rung {
+            case .ddcHardware:
+                // Routed through the coalescing writer so steps that outpace the
+                // I2C bus are dropped instead of queued.
+                applyStep = { [weak self] value in
+                    self?.writeDDCBrightnessCoalesced(percent: value, for: displayID)
+                }
+            case .gammaTable:
+                // The transfer-table write is a synchronous WindowServer call, so
+                // it goes to the background queue like the built-in path's IOKit
+                // write; at 125 steps/s it would otherwise stall the main thread.
+                applyStep = { [weak self] value in
+                    guard let self else { return }
+                    self.queue.async { self.setSoftwareBrightness(value, for: displayID) }
+                }
+            case .overlay:
+                // A layer opacity change, cheap enough to do inline on the main
+                // thread the animator already ticks on.
+                applyStep = { value in
+                    MainActor.assumeIsolated {
+                        BrightnessOverlayManager.shared.setBrightness(value, for: displayID)
+                    }
+                }
+            case .unavailable:
+                // Nothing to glide to. Don't move the slider either: a value that
+                // changes while the screen does not is exactly the lie the ladder exists to stop.
+                return
+            }
 
-            if currentStatus == false {
-                // Software (gamma) path. The transfer-table write is a
-                // synchronous WindowServer call, so it goes to the background
-                // queue like the built-in path's IOKit write; at 125 steps/s
-                // it would otherwise stall the main thread mid-glide.
-                anim.animate(from: fromBrightness, to: clamped,
-                             steps: smoothSteps, duration: duration) { [weak self, weak display] value, _ in
-                    guard let self, let display else { return }
-                    display.brightness = value
-                    // Above 100 the boost sync owns the transfer table (see setBrightness).
-                    if value <= 100 {
-                        self.queue.async { self.setSoftwareBrightness(value, for: displayID) }
-                    }
-                    BrightnessBoostService.shared.syncOverlay(for: display)
-                }
-            } else {
-                // DDC path, routed through the coalescing writer so steps that
-                // outpace the I2C bus are dropped instead of queued.
-                anim.animate(from: fromBrightness, to: clamped,
-                             steps: smoothSteps, duration: duration) { [weak self, weak display] value, _ in
-                    guard let self, let display else { return }
-                    display.brightness = value
-                    // Above 100 the boost sync owns the transfer table (see setBrightness).
-                    if value <= 100 {
-                        self.writeDDCBrightnessCoalesced(percent: value, for: displayID)
-                    }
-                    BrightnessBoostService.shared.syncOverlay(for: display)
-                }
+            anim.animate(from: fromBrightness, to: clamped,
+                         steps: smoothSteps, duration: duration) { [weak display] value, _ in
+                guard let display else { return }
+                display.brightness = value
+                if value <= 100 { applyStep(value) }
+                BrightnessBoostService.shared.syncOverlay(for: display)
             }
         }
     }
@@ -797,7 +900,12 @@ final class BrightnessService: @unchecked Sendable {
             var red = baseline.red
             var green = baseline.green
             var blue = baseline.blue
-            _ = CGSetDisplayTransferByTable(displayID, UInt32(baseline.count), &red, &green, &blue)
+            // The return value is the only evidence that this rung works at all:
+            // a display that rejects the table drops to the overlay rung.
+            noteGammaWriteResult(
+                CGSetDisplayTransferByTable(displayID, UInt32(baseline.count), &red, &green, &blue),
+                for: displayID
+            )
             return
         }
 
@@ -806,7 +914,10 @@ final class BrightnessService: @unchecked Sendable {
         var green = baseline.green.map { CGGammaValue($0 * floatFactor) }
         var blue = baseline.blue.map { CGGammaValue($0 * floatFactor) }
 
-        _ = CGSetDisplayTransferByTable(displayID, UInt32(baseline.count), &red, &green, &blue)
+        noteGammaWriteResult(
+            CGSetDisplayTransferByTable(displayID, UInt32(baseline.count), &red, &green, &blue),
+            for: displayID
+        )
     }
 
     /// External boost region: BrightnessBoostService drives the transfer table
@@ -846,7 +957,13 @@ final class BrightnessService: @unchecked Sendable {
             // display's software-dimming routing would stick to whatever
             // display inherits its ID next.
             hdrDimmedDisplays.remove(displayID)
+            // Same reuse hazard for the rung's gamma input: a reconnecting
+            // display must start unproven, not inherit a verdict.
+            gammaRejected.remove(displayID)
         }
+        // A disconnect must leave nothing behind that could cover a screen that
+        // comes back on this ID (AGENTS.md rule #4).
+        BrightnessOverlayManager.shared.removeOverlay(for: displayID)
         // Same ID-reuse hazard for the rest: reapplySoftwareBrightnessIfNeeded
         // reads the in-memory factor first, so a display inheriting this ID
         // would silently get the departed display's dimming factor.

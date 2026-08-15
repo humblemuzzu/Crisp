@@ -63,6 +63,12 @@ cp "$ICONS/icon_512.png"  "$ICONSET/icon_512x512.png"
 cp "$ICONS/icon_1024.png" "$ICONSET/icon_512x512@2x.png"
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 
+echo "==> Copying the monitor quirks database…"
+# Directory, not flattened: MonitorQuirksService looks in Resources/quirks.
+# The README is the contributor guide, not something the app reads.
+cp -R Crisp/Resources/quirks "$APP/Contents/Resources/quirks"
+rm -f "$APP/Contents/Resources/quirks/README.md"
+
 echo "==> Compiling localizations from the String Catalog…"
 # The CLT ship no xcstringstool, so generate <lang>.lproj/Localizable.strings
 # ourselves; without this the bundle has zero localizations and ships en-only.

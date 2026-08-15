@@ -25,20 +25,46 @@ final class IOKitDDCTransport: DDCTransport, @unchecked Sendable {
     /// about.
     var onMappingWarning: ((String?) -> Void)?
 
-    // MARK: - IOAVService Cache (ARM64 only)
+    // MARK: - DDC Channel Cache (ARM64 only)
 
 #if arch(arm64)
-    private var avServiceCache: [CGDirectDisplayID: IOAVServiceRef] = [:]
+    /// A display's resolved DDC channel: the AVService to talk to, and the I2C chip
+    /// address that AVService answers on. The two are discovered together because the
+    /// address is a fact about the link (an MCDP2900-converted HDMI port answers only at
+    /// 0xB7), so caching them apart would let them drift.
+    private struct Channel {
+        let service: IOAVServiceRef
+        let chipAddress: UInt8
+    }
+
+    private var channelCache: [CGDirectDisplayID: Channel] = [:]
     private let avServiceLock = NSLock()
-    /// Ordered list of all working external AVServices found during last enumeration.
-    private var allExternalAVServices: [IOAVServiceRef] = []
+    /// Ordered list of all working external channels found during last enumeration.
+    private var allExternalChannels: [Channel] = []
 #endif
 
     // MARK: - DDCTransport
 
+    /// Reports the chip address discovered alongside this display's channel, so the
+    /// protocol layer can pass it back down into `send` / `request`. Enumerating here
+    /// costs nothing extra in the normal case: the walk is cached, and the `send` that
+    /// follows hits that cache.
+    func chipAddress(for displayID: CGDirectDisplayID) -> UInt8 {
+#if arch(arm64)
+        return findChannel(for: displayID)?.chipAddress ?? DDCPacket.displayChipAddress
+#else
+        // Intel addresses the DDC/CI destination (0x6E) directly in IOI2CRequest and has
+        // no chip-address argument to vary.
+        return DDCPacket.displayChipAddress
+#endif
+    }
+
     func send(_ frame: [UInt8], to displayID: CGDirectDisplayID, chipAddress: UInt8) -> Bool {
 #if arch(arm64)
-        return arm64Send(frame, to: displayID, chipAddress: chipAddress)
+        // `chipAddress` is deliberately not forwarded: the arm64 path takes the
+        // address from the same channel lookup that yields the service, so the
+        // two can never come from different lookups (see `arm64Send`).
+        return arm64Send(frame, to: displayID)
 #else
         return intelSend(frame, to: displayID)
 #endif
@@ -52,8 +78,9 @@ final class IOKitDDCTransport: DDCTransport, @unchecked Sendable {
         isValidReply: ([UInt8]) -> Bool
     ) -> [UInt8]? {
 #if arch(arm64)
+        // Same as `send`: the address travels with the channel, not from here.
         return arm64Request(frame, replyLength: replyLength, from: displayID,
-                            chipAddress: chipAddress, isValidReply: isValidReply)
+                            isValidReply: isValidReply)
 #else
         return intelRequest(frame, replyLength: replyLength, from: displayID,
                             isValidReply: isValidReply)
@@ -65,7 +92,7 @@ final class IOKitDDCTransport: DDCTransport, @unchecked Sendable {
     func invalidateChannel(for displayID: CGDirectDisplayID) {
 #if arch(arm64)
         avServiceLock.lock()
-        avServiceCache.removeValue(forKey: displayID)
+        channelCache.removeValue(forKey: displayID)
         avServiceLock.unlock()
 #endif
     }
@@ -75,8 +102,8 @@ final class IOKitDDCTransport: DDCTransport, @unchecked Sendable {
     func invalidateAllChannels() {
 #if arch(arm64)
         avServiceLock.lock()
-        avServiceCache.removeAll()
-        allExternalAVServices.removeAll()
+        channelCache.removeAll()
+        allExternalChannels.removeAll()
         avServiceLock.unlock()
 #endif
     }
@@ -105,8 +132,8 @@ final class IOKitDDCTransport: DDCTransport, @unchecked Sendable {
     ///      pairing far better than the old sorted-index because the AVService order
     ///      follows the framebuffer order within the same subtree.
     ///
-    /// Returns the map plus the working AVServices in traversal order.
-    private func buildAVServiceMapByProximity() -> (map: [CGDirectDisplayID: IOAVServiceRef], ordered: [IOAVServiceRef]) {
+    /// Returns the map plus the working channels in traversal order.
+    private func buildChannelMapByProximity() -> (map: [CGDirectDisplayID: Channel], ordered: [Channel]) {
         // External CG displays we need to map.
         var displayCount: UInt32 = 0
         CGGetOnlineDisplayList(0, nil, &displayCount)
@@ -128,7 +155,7 @@ final class IOKitDDCTransport: DDCTransport, @unchecked Sendable {
         ) == KERN_SUCCESS else { return ([:], []) }
         defer { IOObjectRelease(iterator) }
 
-        var ordered: [IOAVServiceRef] = []
+        var ordered: [Channel] = []
         var identities: [DDCServiceMatcher.Identity?] = []
         var lastIdentity: DDCServiceMatcher.Identity? = nil
 
@@ -151,9 +178,14 @@ final class IOKitDDCTransport: DDCTransport, @unchecked Sendable {
                 // Some drivers omit "Location"; still attempt those. Skip explicit non-External.
                 if location == nil || location == "External",
                    let avService = IOAVServiceCreateWithService(kCFAllocatorDefault, entry) {
+                    // Resolve the chip address *before* probing. The probe is what decides
+                    // whether this channel exists at all, and an MCDP2900-converted HDMI
+                    // port never answers at 0x37 — probing it there discards the service and
+                    // the display becomes invisible to the app, not merely uncontrollable.
+                    let chipAddress = chipAddress(forProxy: entry)
                     var testBuf = [UInt8](repeating: 0, count: 32)
-                    if IOAVServiceReadI2C(avService, 0x37, 0x51, &testBuf, 32) == kIOReturnSuccess {
-                        ordered.append(avService)
+                    if IOAVServiceReadI2C(avService, UInt32(chipAddress), 0x51, &testBuf, 32) == kIOReturnSuccess {
+                        ordered.append(Channel(service: avService, chipAddress: chipAddress))
                         identities.append(lastIdentity)
                     }
                 }
@@ -176,7 +208,7 @@ final class IOKitDDCTransport: DDCTransport, @unchecked Sendable {
         }
         let result = DDCServiceMatcher.match(services: identities, displays: displays)
 
-        var map: [CGDirectDisplayID: IOAVServiceRef] = [:]
+        var map: [CGDirectDisplayID: Channel] = [:]
         // Safe: each CGDirectDisplayID key is assigned exactly once, so the unspecified
         // Dictionary iteration order cannot drop or overwrite an entry.
         for (displayID, serviceIndex) in result.byDisplayID {
@@ -208,6 +240,35 @@ final class IOKitDDCTransport: DDCTransport, @unchecked Sendable {
                                           serial: u32(productAttributes["SerialNumber"]) ?? 0)
     }
 
+    /// The I2C chip address a `DCPAVServiceProxy` answers on.
+    ///
+    /// Ported from m1ddc's `isMCDP29XXProxy` (`sources/ioregistry.m:14-36`, commit
+    /// a561e56) and used at the same point in the flow (`sources/ioregistry.m:252`).
+    /// Macs whose built-in HDMI port emits DisplayPort internally convert it with a
+    /// Kinetic/MegaChips MCDP2900, and that converter announces itself as
+    /// `EPICProviderClass = "AppleDCPMCDP29XX"` on the proxy's parent.
+    ///
+    /// Exactly *one* parent, in the IOService plane — not a recursive search, which would
+    /// find an unrelated ancestor's provider class and mis-address a working display. Both
+    /// calls are public IOKit; every failure (no parent, no property, wrong type,
+    /// unrecognised class) falls through to the standard address, so the worst case is
+    /// today's behaviour rather than a crash or a broken channel.
+    private func chipAddress(forProxy proxy: io_service_t) -> UInt8 {
+        var parent: io_registry_entry_t = IO_OBJECT_NULL
+        guard IORegistryEntryGetParentEntry(proxy, kIOServicePlane, &parent) == KERN_SUCCESS,
+              parent != IO_OBJECT_NULL else {
+            return DDCPacket.displayChipAddress
+        }
+        defer { IOObjectRelease(parent) }
+
+        // `as? String` is the type check m1ddc spells out as CFGetTypeID == CFStringGetTypeID:
+        // a non-string property yields nil and therefore the standard address.
+        let providerClass = IORegistryEntryCreateCFProperty(
+            parent, "EPICProviderClass" as CFString, kCFAllocatorDefault, 0
+        )?.takeRetainedValue() as? String
+        return DDCPacket.chipAddress(forEPICProviderClass: providerClass)
+    }
+
     /// Returns the IOKit class name of a registry entry.
     private func ioClassName(_ entry: io_service_t) -> String? {
         let buf = UnsafeMutablePointer<CChar>.allocate(capacity: 128)
@@ -216,18 +277,18 @@ final class IOKitDDCTransport: DDCTransport, @unchecked Sendable {
         return String(cString: buf)
     }
 
-    /// Finds the IOAVService for the given display. Caches the result per display.
-    /// Returns nil if no working AVService is found (built-in displays, or displays
+    /// Finds the DDC channel for the given display. Caches the result per display.
+    /// Returns nil if no working channel is found (built-in displays, or displays
     /// that don't support DDC over the Apple Silicon AV path).
     ///
     /// Matching strategy: depth-first IOService traversal that pairs each DDC channel
     /// with the display identity seen closest to it in the registry (see
-    /// buildAVServiceMapByProximity), then vendor/product/serial matching against the
+    /// buildChannelMapByProximity), then vendor/product/serial matching against the
     /// CoreGraphics display list, with a traversal-order fallback.
-    private func findAVService(for displayID: CGDirectDisplayID) -> IOAVServiceRef? {
-        // Fast path: return cached service if present
+    private func findChannel(for displayID: CGDirectDisplayID) -> Channel? {
+        // Fast path: return cached channel if present
         avServiceLock.lock()
-        if let cached = avServiceCache[displayID] {
+        if let cached = channelCache[displayID] {
             avServiceLock.unlock()
             return cached
         }
@@ -235,7 +296,7 @@ final class IOKitDDCTransport: DDCTransport, @unchecked Sendable {
 
         // Slow path: enumerate the IOService registry depth-first, pairing each working
         // DDC channel with the nearest preceding display identity.
-        let (serviceMap, ordered) = buildAVServiceMapByProximity()
+        let (channelMap, ordered) = buildChannelMapByProximity()
 
         guard !ordered.isEmpty else {
             return nil
@@ -244,15 +305,15 @@ final class IOKitDDCTransport: DDCTransport, @unchecked Sendable {
         // Re-check cache (double-checked locking) in case another thread enumerated
         // and populated the cache while we were enumerating without the lock held.
         avServiceLock.lock()
-        if let cached = avServiceCache[displayID] {
+        if let cached = channelCache[displayID] {
             avServiceLock.unlock()
             return cached
         }
-        allExternalAVServices = ordered
-        for (extID, avService) in serviceMap {
-            avServiceCache[extID] = avService
+        allExternalChannels = ordered
+        for (extID, channel) in channelMap {
+            channelCache[extID] = channel
         }
-        let result = avServiceCache[displayID]
+        let result = channelCache[displayID]
         avServiceLock.unlock()
 
         return result
@@ -261,39 +322,50 @@ final class IOKitDDCTransport: DDCTransport, @unchecked Sendable {
     /// ARM64 DDC write. `IOAVServiceWriteI2C` takes the frame's leading source byte
     /// (0x51) as its separate `dataAddress` argument, so only the rest of the frame
     /// travels in the buffer.
-    private func arm64Send(_ frame: [UInt8], to displayID: CGDirectDisplayID, chipAddress: UInt8) -> Bool {
-        guard frame.count >= 2, let avService = findAVService(for: displayID) else { return false }
+    ///
+    /// The chip address comes from this lookup, never from the caller's earlier one.
+    /// `invalidateChannel` / `invalidateAllChannels` run synchronously off the DDC
+    /// queue on purpose (`DDCService.clearCache`), so a reconfiguration landing between
+    /// the protocol layer's `chipAddress(for:)` call and this one would otherwise pair a
+    /// stale address with a freshly re-resolved — possibly different — service. Service
+    /// and address are facts about one link and are only ever read together.
+    private func arm64Send(_ frame: [UInt8], to displayID: CGDirectDisplayID) -> Bool {
+        guard frame.count >= 2, let channel = findChannel(for: displayID) else { return false }
 
         var buf = Array(frame.dropFirst())
-        let ret = IOAVServiceWriteI2C(avService, UInt32(chipAddress), UInt32(frame[0]),
+        let ret = IOAVServiceWriteI2C(channel.service, UInt32(channel.chipAddress), UInt32(frame[0]),
                                       &buf, UInt32(buf.count))
         return ret == kIOReturnSuccess
     }
 
     /// ARM64 DDC read: send the request frame, then read the reply from the same
-    /// sub-address.
+    /// sub-address. The chip address travels with the channel, for the reason spelled
+    /// out on `arm64Send`.
     private func arm64Request(
         _ frame: [UInt8],
         replyLength: Int,
         from displayID: CGDirectDisplayID,
-        chipAddress: UInt8,
         isValidReply: ([UInt8]) -> Bool
     ) -> [UInt8]? {
-        guard frame.count >= 2, let avService = findAVService(for: displayID) else { return nil }
+        guard frame.count >= 2, let channel = findChannel(for: displayID) else { return nil }
 
+        let chipAddress = channel.chipAddress
         var requestBuf = Array(frame.dropFirst())
-        let writeRet = IOAVServiceWriteI2C(avService, UInt32(chipAddress), UInt32(frame[0]),
+        let writeRet = IOAVServiceWriteI2C(channel.service, UInt32(chipAddress), UInt32(frame[0]),
                                           &requestBuf, UInt32(requestBuf.count))
         guard writeRet == kIOReturnSuccess else {
             return nil
         }
 
-        // Wait for the display to prepare its DDC/CI reply (~40ms per spec)
-        Thread.sleep(forTimeInterval: 0.04)
+        // Wait for the display to prepare its DDC/CI reply (~40ms per spec). An MCDP2900
+        // converter is slower: m1ddc waits 50 ms there because 10 ms "returned empty
+        // MCDP29xx replies in testing" (headers/i2c.h:25, applied in sources/i2c.m:45).
+        // Only the read side differs; the write delay and retry counts are unchanged.
+        Thread.sleep(forTimeInterval: chipAddress == DDCPacket.mcdp29xxChipAddress ? 0.05 : 0.04)
 
         // Read the VCP reply
         var replyBuf = [UInt8](repeating: 0, count: replyLength)
-        let readRet = IOAVServiceReadI2C(avService, UInt32(chipAddress), UInt32(frame[0]),
+        let readRet = IOAVServiceReadI2C(channel.service, UInt32(chipAddress), UInt32(frame[0]),
                                          &replyBuf, UInt32(replyBuf.count))
         guard readRet == kIOReturnSuccess else {
             return nil

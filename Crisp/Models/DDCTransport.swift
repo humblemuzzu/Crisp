@@ -11,6 +11,26 @@ import CoreGraphics
 /// The production conformer is `IOKitDDCTransport`; `FakeDDCTransport` in the test
 /// target scripts monitors that answer, lie, or say nothing.
 protocol DDCTransport: AnyObject, Sendable {
+    /// The I2C chip address this display's DDC channel answers on.
+    ///
+    /// The chip address is a property of the *link*, not of the protocol: a display on a
+    /// Mac's built-in HDMI port may sit behind an MCDP2900 converter that only answers at
+    /// 0xB7 (`DDCPacket.mcdp29xxChipAddress`), and only the transport — which walks the
+    /// IORegistry to find the channel in the first place — can know that. So the transport
+    /// reports the address and the protocol layer passes it straight back down through
+    /// `send` / `request`, keeping the wire address explicit on every call instead of
+    /// hidden inside the I/O.
+    ///
+    /// Must fall back to `DDCPacket.displayChipAddress` whenever the answer is unknown.
+    ///
+    /// The address the protocol layer then passes back down is what it *asked for*, and
+    /// a transport that caches channels is free to prefer the address from the lookup
+    /// that produced the channel it is about to use: a display reconfiguration between
+    /// the two calls invalidates caches synchronously, and pairing an address from
+    /// before it with a service from after it would be a link that never existed.
+    /// `IOKitDDCTransport` does exactly that on Apple Silicon.
+    func chipAddress(for displayID: CGDirectDisplayID) -> UInt8
+
     /// Sends a host→display frame that expects no reply (Set VCP).
     /// - Returns: true if the display acked the transaction. An ack means the bytes
     ///   reached the panel, not that it honoured them.

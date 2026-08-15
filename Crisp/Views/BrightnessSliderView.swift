@@ -2,44 +2,21 @@ import SwiftUI
 
 struct BrightnessSliderView: View {
     @ObservedObject var display: DisplayInfo
-    var compact: Bool = false  // Compact mode: hides the mode label row (used for top-level inline sliders)
+    var compact: Bool = false  // Compact mode: badge sits inline instead of on its own row
     @State private var localBrightness: Double = 50
     @State private var isDragging: Bool = false
-    @State private var ddcStatus: Bool? = nil  // nil=unknown, true=DDC, false=Software
 
     var body: some View {
         VStack(spacing: 2) {
-            // Mode indicator row
+            // Mode indicator row (roomy layout only; the compact one carries the
+            // same badge inline, next to the percentage).
             if !compact {
-            HStack(spacing: 4) {
-                Spacer()
-                if display.isBuiltin {
-                    Circle()
-                        .fill(Color.blue)
-                        .frame(width: 5, height: 5)
-                        .accessibilityHidden(true)
-                    Text("System")
-                        .font(.caption2)
-                        .foregroundColor(.blue)
-                } else if let status = ddcStatus {
-                    Circle()
-                        .fill(status ? Color.green : Color.orange)
-                        .frame(width: 5, height: 5)
-                        .accessibilityHidden(true)
-                    Text(status ? "DDC" : "Software")
-                        .font(.caption2)
-                        .foregroundColor(status ? .green : .orange)
+                HStack(spacing: 4) {
+                    Spacer()
+                    BrightnessRungBadge(rung: display.brightnessRung, isBuiltin: display.isBuiltin)
                 }
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 2)
-            .accessibilityLabel(
-                display.isBuiltin
-                    ? "Brightness control mode: System"
-                    : (ddcStatus == true
-                        ? "Brightness control mode: DDC hardware"
-                        : "Brightness control mode: Software emulation")
-            )
+                .padding(.horizontal, 12)
+                .padding(.top, 2)
             }
 
             HStack(spacing: 8) {
@@ -51,8 +28,9 @@ struct BrightnessSliderView: View {
                     if !editing {
                         Task { @MainActor in
                             // Flush the final value; the coalescing writer already tracked the drag.
+                            // setBrightness re-resolves the rung, so the badge follows a
+                            // mid-drag fallback (DDC gave up) without polling for it.
                             await BrightnessService.shared.setBrightness(localBrightness, for: display)
-                            updateDDCStatus()
                         }
                     }
                 }
@@ -79,6 +57,9 @@ struct BrightnessSliderView: View {
                     }
                 }
                 .controlSize(.small)
+                // Nothing on this machine can dim this screen: a live-looking
+                // knob that writes nowhere is worse than an honest dead one.
+                .disabled(!display.brightnessRung.isControllable)
                 .accessibilityLabel("Display brightness")
                 .accessibilityValue("\(Int(localBrightness))%")
                 .onChange(of: localBrightness) { _, newValue in
@@ -91,6 +72,10 @@ struct BrightnessSliderView: View {
                     }
                 }
 
+                if compact {
+                    BrightnessRungBadge(rung: display.brightnessRung, isBuiltin: display.isBuiltin)
+                }
+
                 Text("\(Int(localBrightness))%")
                     .font(.caption2)
                     .monospacedDigit()
@@ -100,10 +85,24 @@ struct BrightnessSliderView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 4)
+
+            // The one rung whose reason is worth spending a line on: the control
+            // above is disabled, so the panel has to say why without a hover.
+            if let reason = unavailableReason {
+                Text(reason)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+            }
         }
         .task(id: display.displayID) {
             localBrightness = display.brightness
-            updateDDCStatus()
+            // Panel open is the moment the badge has to be right; the service
+            // recomputes it from what it knows rather than the view guessing.
+            BrightnessService.shared.refreshRung(for: display)
         }
         .onChange(of: display.brightness) { _, newValue in
             // External change (brightness keys, another app, reconnect reapply).
@@ -143,8 +142,61 @@ struct BrightnessSliderView: View {
         }
     }
 
-    private func updateDDCStatus() {
-        ddcStatus = BrightnessService.shared.isDDCAvailable(for: display.displayID)
+    private var unavailableReason: String? {
+        guard case .unavailable(let reason) = display.brightnessRung else { return nil }
+        return reason.text
+    }
+}
+
+/// Names the mechanism currently dimming a display: a 5pt dot plus one word,
+/// deliberately quiet (this is a menu-bar panel, not a diagnostics console).
+/// The reason for a degraded rung is one hover away rather than on screen.
+struct BrightnessRungBadge: View {
+    let rung: BrightnessRung
+    let isBuiltin: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 5, height: 5)
+                .accessibilityHidden(true)
+            Text(label)
+                .font(.caption2)
+                .foregroundColor(color)
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .help(tooltip)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: "\(label). \(tooltip)"))
+    }
+
+    /// Hardware keeps the wording the two paths have always used ("System" for
+    /// the built-in panel's IOKit backlight, "DDC" for a monitor's own register):
+    /// both are rung 1, and both are the real backlight.
+    private var label: String {
+        switch rung {
+        case .ddcHardware: return isBuiltin ? String(localized: "System") : String(localized: "DDC")
+        case .gammaTable: return String(localized: "Gamma")
+        case .overlay: return String(localized: "Overlay")
+        case .unavailable: return String(localized: "Unavailable")
+        }
+    }
+
+    private var color: Color {
+        switch rung {
+        case .ddcHardware: return isBuiltin ? .blue : .green
+        case .gammaTable, .overlay: return .orange
+        case .unavailable: return .secondary
+        }
+    }
+
+    private var tooltip: String {
+        if let reason = rung.reason { return reason.text }
+        return isBuiltin
+            ? String(localized: "The built-in panel's own backlight, through IOKit.")
+            : String(localized: "The monitor's own backlight, over DDC/CI.")
     }
 }
 

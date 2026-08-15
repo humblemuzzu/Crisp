@@ -137,8 +137,9 @@ final class DDCProtocolTests: XCTestCase {
     // MARK: - Engine: what reaches the wire
 
     /// *Writes put the Set VCP frame on the DDC chip address.* Pins both the bytes and
-    /// the 0x37 chip address the seam carries (0xB7 for MCDP2900-converted HDMI is a
-    /// later phase; this test is what will catch it being changed by accident).
+    /// the 0x37 chip address the seam carries for an ordinary display. The MCDP2900 case
+    /// is pinned separately below; this test is what catches the ordinary case regressing
+    /// to 0xB7.
     /// Kills mutation: sending the frame to a different chip address, or framing the
     /// write as a Get VCP request.
     func testWriteSendsSetVCPFrameToDisplayChipAddress() {
@@ -203,6 +204,90 @@ final class DDCProtocolTests: XCTestCase {
             let engine = makeEngine(fake)
             XCTAssertNil(engine.read(displayID: display, command: brightness), "\(fault) must fail the read")
         }
+    }
+
+    // MARK: - Chip address (MCDP2900-converted HDMI ports)
+    //
+    // On several Macs the built-in HDMI port emits DisplayPort internally and converts it
+    // with a Kinetic/MegaChips MCDP2900, which answers DDC/CI only at 0xB7. Which address
+    // a display uses is the transport's discovery (it walks the IORegistry); these tests
+    // pin what the protocol layer does with the answer — namely pass it through unaltered
+    // and change nothing else about the transaction.
+
+    /// *The requested chip address is the one that reaches the wire.* The protocol layer
+    /// must not second-guess the transport's discovery, in either direction.
+    /// Kills mutation: hard-coding 0x37 in the engine again, or ignoring the per-display
+    /// answer and applying one display's address to another.
+    func testEngineSendsOnTheChipAddressTheTransportReports() {
+        let mcdp: CGDirectDisplayID = 11
+        let fake = FakeDDCTransport()
+        fake.setChipAddress(DDCPacket.mcdp29xxChipAddress, displayID: mcdp)
+        fake.setValue(25, max: 100, displayID: mcdp, code: brightness)
+        fake.setValue(25, max: 100, displayID: display, code: brightness)
+        let engine = makeEngine(fake)
+
+        XCTAssertTrue(engine.write(displayID: mcdp, command: brightness, value: 40))
+        _ = engine.read(displayID: mcdp, command: brightness)
+        XCTAssertTrue(engine.write(displayID: display, command: brightness, value: 40))
+        _ = engine.read(displayID: display, command: brightness)
+
+        XCTAssertEqual(fake.sentFrames.map(\.chipAddress), [0xB7, 0xB7, 0x37, 0x37])
+    }
+
+    /// *The frame is byte-identical on both chip addresses.* The chip address is I2C
+    /// addressing that lives outside the DDC/CI frame, so nothing inside the frame — least
+    /// of all the checksum, whose seeds are the 0x6E/0x50 frame addresses — may vary with
+    /// it. Getting this wrong would produce frames a monitor silently rejects.
+    /// Kills mutation: deriving any frame byte, or a checksum seed, from the chip address.
+    func testFramesAreIdenticalAcrossChipAddresses() {
+        let mcdp: CGDirectDisplayID = 11
+        let fake = FakeDDCTransport()
+        fake.setChipAddress(DDCPacket.mcdp29xxChipAddress, displayID: mcdp)
+        let engine = makeEngine(fake)
+
+        _ = engine.write(displayID: display, command: brightness, value: 40)
+        _ = engine.read(displayID: display, command: brightness)
+        _ = engine.write(displayID: mcdp, command: brightness, value: 40)
+        _ = engine.read(displayID: mcdp, command: brightness)
+
+        let standard = fake.sentFrames.filter { $0.displayID == display }.map(\.bytes)
+        let converted = fake.sentFrames.filter { $0.displayID == mcdp }.map(\.bytes)
+        XCTAssertEqual(standard, [[0x51, 0x84, 0x03, 0x10, 0x00, 0x28, 0x80],
+                                  [0x51, 0x82, 0x01, 0x10, 0xAC]])
+        XCTAssertEqual(converted, standard, "the chip address is not part of the frame")
+    }
+
+    /// *A reply is parsed the same way whatever address it arrived on.* Reply validation
+    /// is seeded with 0x50, the host address in the frame — never with the chip address.
+    /// Kills mutation: seeding `parseGetVCPReply`'s checksum with the chip address.
+    func testReplyParsingDoesNotDependOnTheChipAddress() {
+        let mcdp: CGDirectDisplayID = 11
+        let fake = FakeDDCTransport()
+        fake.setChipAddress(DDCPacket.mcdp29xxChipAddress, displayID: mcdp)
+        fake.setValue(25, max: 100, displayID: mcdp, code: brightness)
+        let engine = makeEngine(fake)
+
+        let result = engine.read(displayID: mcdp, command: brightness)
+        XCTAssertEqual(result?.current, 25)
+        XCTAssertEqual(result?.max, 100)
+    }
+
+    /// *Only `AppleDCPMCDP29XX` selects 0xB7.* This is the whole detection decision, split
+    /// out of the IOKit traversal so it can be tested without MCDP hardware. Every
+    /// uncertain answer must resolve to the standard address, because that is what makes
+    /// the probe safe to run on every Mac.
+    /// Kills mutation: matching a prefix/substring of the class name, matching any
+    /// non-nil provider class, or defaulting to 0xB7 when the property is missing.
+    func testOnlyTheMCDP29XXProviderClassSelectsTheConverterAddress() {
+        XCTAssertEqual(DDCPacket.chipAddress(forEPICProviderClass: "AppleDCPMCDP29XX"), 0xB7)
+
+        // Provider classes seen on a non-MCDP Apple Silicon Mac, plus the no-property case.
+        for other in ["DCPDP13Service", "AppleDCPDPTXController", "AppleDCPDPTXRemotePort",
+                      "DCPDPDevice", "AppleDCPMCDP29XXExtra", "AppleDCPMCDP29", ""] {
+            XCTAssertEqual(DDCPacket.chipAddress(forEPICProviderClass: other), 0x37,
+                           "\(other) must not be treated as an MCDP2900")
+        }
+        XCTAssertEqual(DDCPacket.chipAddress(forEPICProviderClass: nil), 0x37)
     }
 
     // MARK: - Retry

@@ -11,10 +11,39 @@ import Foundation
 /// of being trusted twice.
 enum DDCPacket {
     /// I2C chip address of a DDC/CI display: the 7-bit form of the 0x6E destination
-    /// address. A later phase adds 0xB7 for Macs whose built-in HDMI routes through the
-    /// MCDP2900 converter, which is why the chip address travels through the transport
-    /// seam instead of being hard-coded in the I/O calls.
+    /// address. Not every port answers here — see `mcdp29xxChipAddress` — which is why
+    /// the chip address travels through the transport seam instead of being hard-coded
+    /// in the I/O calls.
+    /// (m1ddc `headers/ioregistry.h:15`, `DDC_CHIP_ADDRESS_DEFAULT`.)
     static let displayChipAddress: UInt8 = 0x37
+
+    /// I2C chip address of a display behind a Kinetic/MegaChips MCDP2900 (MCDP29XX)
+    /// DisplayPort→HDMI converter. Several Macs (all M1 models with an HDMI port, and
+    /// reportedly the base M2 Mac mini) emit DisplayPort internally on their built-in
+    /// HDMI port and convert it with this chip, which does not answer DDC/CI at 0x37 at
+    /// all — not for reads, not for writes, and not for the enumeration probe.
+    /// (m1ddc `headers/ioregistry.h:16`, `DDC_CHIP_ADDRESS_MCDP29XX`.)
+    static let mcdp29xxChipAddress: UInt8 = 0xB7
+
+    /// Value of the `EPICProviderClass` IORegistry property that identifies the MCDP2900
+    /// converter. It sits on the immediate parent of the display's `DCPAVServiceProxy`.
+    /// (m1ddc `sources/ioregistry.m:28`.)
+    static let mcdp29xxProviderClass = "AppleDCPMCDP29XX"
+
+    /// Chip address to talk to a DDC channel whose `DCPAVServiceProxy` parent reports
+    /// `providerClass` as its `EPICProviderClass`.
+    ///
+    /// The registry property is the authoritative fact (m1ddc deliberately keeps no Mac
+    /// model allowlist), and every uncertain answer — no parent, no property, a property
+    /// that is not a string, an unrecognised class — resolves to the standard address.
+    /// That is what makes the detection safe to run on every machine: a registry that
+    /// never grew this key behaves exactly as it did before.
+    ///
+    /// Pure so the decision can be tested without MCDP hardware; the IOKit traversal that
+    /// produces `providerClass` lives in `IOKitDDCTransport` and cannot be faked.
+    static func chipAddress(forEPICProviderClass providerClass: String?) -> UInt8 {
+        providerClass == mcdp29xxProviderClass ? mcdp29xxChipAddress : displayChipAddress
+    }
 
     /// DDC/CI destination address, and therefore the checksum seed for host→display frames.
     static let destinationAddress: UInt8 = 0x6E

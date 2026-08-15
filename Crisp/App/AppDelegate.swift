@@ -242,6 +242,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Drop EDR overlays and restore SDR on externals Crisp switched to HDR,
         // so no monitor is left bright with no boost and no DDC control.
         BrightnessBoostService.shared.prepareForTermination()
+        // Same reason for the dimming overlays: a shielding-level black window that
+        // outlives the app would leave a screen dark with nothing left to undo it.
+        BrightnessOverlayManager.shared.removeAll()
         // GammaService already handles CGDisplayRestoreColorSyncSettings via willTerminateNotification observer.
         VirtualDisplayService.shared.destroyAll()
     }
