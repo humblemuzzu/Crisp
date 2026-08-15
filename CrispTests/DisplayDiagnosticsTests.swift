@@ -357,6 +357,48 @@ final class DisplayDiagnosticsTests: XCTestCase {
         XCTAssertTrue(markdown.contains("traversal order"), markdown)
     }
 
+    // MARK: - Capabilities in the report
+
+    /// **The raw capabilities string is printed verbatim.** It is the evidence;
+    /// everything under it is Crisp's reading of it, and a report that carried
+    /// only the reading could never produce the next bug report about a string a
+    /// parser mishandles.
+    /// Kills mutation: printing only the parsed summary, or normalising the raw
+    /// text before printing it.
+    func testReportPrintsTheRawCapabilitiesStringVerbatim() {
+        let raw = "(prot(monitor)type(LCD)model(MA320U)vcp(10 12 60(0F 11 12 15) 62 87)mswhql(1)mccs_ver(2.2))"
+        var withCaps = display()
+        withCaps.capabilities = CapabilitiesDiagnostic(DDCCapabilities.parse(raw))
+
+        let markdown = DiagnosticReport.markdown(environment: environment, displays: [withCaps])
+
+        XCTAssertTrue(markdown.contains(raw), "the raw string must appear untouched:\n\(markdown)")
+        XCTAssertTrue(markdown.contains("Capabilities string (VCP 0xF3)"))
+        XCTAssertTrue(markdown.contains("valid"), "the validity level is stated")
+        XCTAssertTrue(markdown.contains("0x87 sharpness"), "derived codes are named where the registry knows them")
+        XCTAssertTrue(markdown.contains("mswhql"), "and the fields Crisp ignores are still listed")
+        XCTAssertTrue(markdown.contains("2.2"), "the claimed MCCS version")
+        XCTAssertTrue(
+            markdown.contains("never to take one away"),
+            "the report has to say what the string is and is not used for"
+        )
+    }
+
+    /// A monitor with no capabilities string produces no section rather than an
+    /// empty one, and one that was asked and said nothing says so.
+    /// Kills mutation: rendering an empty fenced block, or treating an unanswered
+    /// request as a fault.
+    func testReportOmitsCapabilitiesSectionWhenThereIsNone() {
+        let markdown = DiagnosticReport.markdown(environment: environment, displays: [display()])
+        XCTAssertFalse(markdown.contains("Capabilities string"))
+
+        var unanswered = display()
+        unanswered.capabilities = .unanswered(reason: "the monitor did not answer the VCP 0xF3 request")
+        let second = DiagnosticReport.markdown(environment: environment, displays: [unanswered])
+        XCTAssertTrue(second.contains("the monitor returned nothing"))
+        XCTAssertTrue(second.contains("did not answer"))
+    }
+
     // MARK: - Fixtures
 
     private let environment = DiagnosticEnvironment(

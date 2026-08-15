@@ -5,11 +5,16 @@
 //
 //   crispctl list                 enumerate external displays + their DDC values
 //   crispctl get <feature> [id]   read one feature (brightness|contrast|volume|input|power)
-//   crispctl set <feature> <v> [id]  write one feature (value in monitor units, usually 0-100)
+//   crispctl set <feature> <v> [id] [--force]  write one feature (monitor units, usually 0-100)
+//   crispctl capabilities [id]    read the monitor's capabilities string (VCP 0xF3)
 //   crispctl watch [id]           poll brightness every 2s until interrupted
 //
 // Display IDs are the 1-based indices from `crispctl list`; omit to target the
 // only external display (fails if there is more than one).
+//
+// `set` is the only command that changes anything, and the codes `DDCFeatureRegistry`
+// marks destructive (0x60, 0xD6, 0x04, 0x0C, 0x14, 0x8D, 0xCA) need `--force` or an
+// answered prompt — see `confirmDestructive`.
 
 import Foundation
 import CoreGraphics
@@ -24,6 +29,7 @@ struct CrispCLI {
             case "list": try list()
             case "get": try get(args)
             case "set": try set(args)
+            case "capabilities", "caps": try capabilities(args)
             case "watch": try watch(args)
             case "help", "-h", "--help": help()
             default:
@@ -153,15 +159,107 @@ struct CrispCLI {
     }
 
     static func set(_ args: [String]) throws {
-        guard args.count >= 3 else { throw CLIError("usage: crispctl set <feature> <value> [id]") }
+        var args = args
+        // Flags are stripped before the positional parse so `--force` may sit
+        // anywhere, including after the display index.
+        let forced = args.contains("--force") || args.contains("-f")
+        args.removeAll { $0 == "--force" || $0 == "-f" }
+
+        guard args.count >= 3 else { throw CLIError("usage: crispctl set <feature> <value> [id] [--force]") }
         let code = try featureCode(args[1])
         guard let value = UInt16(args[2]) else { throw CLIError("invalid value '\(args[2])'") }
         let d = try targetDisplay(args, argPos: 3)
+        try confirmDestructive(code: code, value: value, forced: forced)
         let ok = runAsync({ cb in DDCService.shared.writeAsync(displayID: d.displayID, command: code, value: value, completion: cb) })
         if ok == true {
             print("set \(featureName(code)) = \(value) on display [\(d.index)]")
         } else {
             throw CLIError("write failed (display unplugged?)")
+        }
+    }
+
+    /// The CLI's half of the app's write gate: a destructive VCP code is not
+    /// written until the person at the keyboard has seen what it does.
+    ///
+    /// `DDCFeatureRegistry` is linked into `crispctl` (see `project.yml`) and
+    /// already carries `destructive` and `hazard` per code, so the CLI has no
+    /// business writing 0xD6 value 5 — which powers the panel off at a stage many
+    /// monitors cannot be woken from over DDC — as casually as it writes
+    /// brightness. This is not the app's `DDCFeatureDiscovery` gate: there is no
+    /// quirks database, no probe history and no confirmation dialog out here, and
+    /// a CLI whose whole purpose is measuring uncharted monitors must not refuse
+    /// unproven codes. What it owes the user is the hazard and a deliberate
+    /// second step.
+    ///
+    /// Interactive shells get a y/N prompt; anything scripted (stdin not a TTY,
+    /// which is also every CI job) has to say `--force`, because a prompt nobody
+    /// can answer would otherwise hang or silently proceed.
+    ///
+    /// Read paths — `get`, `list`, `capabilities`, `watch` — never come here.
+    static func confirmDestructive(code: UInt8, value: UInt16, forced: Bool) throws {
+        guard let spec = DDCFeatureRegistry.feature(forVCP: code), spec.destructive else { return }
+        if forced { return }
+
+        let hazard = spec.hazard ?? "Writing this code can leave the monitor in a state the Mac cannot undo."
+        FileHandle.standardError.write(Data("""
+        \(spec.vcpText) \(spec.title) is a destructive write.
+        \(hazard)
+        about to write: \(featureName(code)) = \(value)
+
+        """.utf8))
+
+        guard isatty(FileHandle.standardInput.fileDescriptor) == 1 else {
+            throw CLIError("refusing to write VCP \(spec.vcpText) without --force")
+        }
+        print("continue? [y/N] ", terminator: "")
+        let answer = (readLine() ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+        guard answer == "y" || answer == "yes" else {
+            throw CLIError("cancelled; nothing was written")
+        }
+    }
+
+    /// Reads the monitor's capabilities string (DDC/CI command 0xF3).
+    ///
+    /// Read-only: 0xF3 asks the monitor to describe itself and changes nothing.
+    /// It prints the raw string verbatim before anything else, because the raw
+    /// string is the evidence — every tolerance rule in `DDCCapabilities` came
+    /// from someone posting one of these from a monitor that broke a parser, and
+    /// a tool that only prints its own reading of the string cannot produce the
+    /// next one of those.
+    static func capabilities(_ args: [String]) throws {
+        let d = try targetDisplay(args, argPos: 1)
+        guard let caps = runAsync({ (cb: @escaping (DDCCapabilities?) -> Void) in
+            DDCService.shared.readCapabilitiesAsync(displayID: d.displayID, completion: cb)
+        }) ?? nil else {
+            throw CLIError("the monitor did not answer the capabilities request (many implement VCP reads and not 0xF3)")
+        }
+
+        print("raw:")
+        print(caps.raw)
+        print("")
+        print("validity: \(caps.validity.rawValue)")
+        if let model = caps.model { print("model: \(model)") }
+        if let type = caps.monitorType { print("type: \(type)") }
+        if let mccs = caps.mccsVersion { print("mccs_ver: \(mccs)") }
+        if !caps.commands.isEmpty {
+            print("cmds: \(caps.commands.map { String(format: "0x%02X", $0) }.joined(separator: " "))")
+        }
+        print("vcp (\(caps.features.count) codes):")
+        for feature in caps.features {
+            // Codes Crisp has no registry entry for are the majority on a real
+            // monitor (this BenQ advertises 50 and the registry knows 11 of
+            // them), and saying so is more useful than repeating the number.
+            let name = DDCFeatureRegistry.feature(forVCP: feature.code)?.title ?? "(not in Crisp's registry)"
+            let values = feature.values.isEmpty
+                ? ""
+                : " values: " + feature.values.map(\.codeText).joined(separator: " ")
+            print("    \(feature.codeText) \(name)\(values)")
+        }
+        for segment in caps.unknownSegments {
+            print("unsupported field kept: \(segment.name)(\(segment.value))")
+        }
+        for note in caps.diagnostics {
+            print("note: \(note)")
         }
     }
 
@@ -185,11 +283,18 @@ struct CrispCLI {
         usage:
           crispctl list                 enumerate external displays + DDC values
           crispctl get <feature> [id]   read a feature
-          crispctl set <feature> <v> [id]  write a feature (monitor units, usually 0-100)
+          crispctl set <feature> <v> [id] [--force]  write a feature (monitor units, usually 0-100)
+          crispctl capabilities [id]    read the capabilities string (VCP 0xF3, read-only)
           crispctl watch [id]           poll brightness until interrupted
 
         features: brightness | contrast | volume | input | power | red | green | blue
         ids are the 1-based indices from `crispctl list` (omit when only one display).
+
+        --force  proceed with a write the registry marks destructive (0x60 input,
+                 0xD6 power, 0x04 factory reset, 0x0C/0x14 colour, 0x8D blank,
+                 0xCA OSD lock). Without it crispctl prints the hazard and asks
+                 first — and refuses outright when stdin is not a terminal, so a
+                 script can never lose the screen by accident.
         """)
     }
 }

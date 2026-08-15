@@ -115,6 +115,74 @@ final class DDCProtocolEngine: @unchecked Sendable {
         return nil
     }
 
+    // MARK: - Capabilities
+
+    /// Reads the monitor's capabilities string (DDC/CI 0xF3), fragment by fragment.
+    ///
+    /// Deliberately outside the VCP read path's bookkeeping. It respects an active read
+    /// quarantine — the whole point of the quarantine is that a wedged controller
+    /// degrades further under traffic, and a capabilities read is 20-odd transactions —
+    /// but it does not feed the failure streak, because a monitor that implements VCP
+    /// reads and not 0xF3 is completely normal and must not be quarantined for it.
+    ///
+    /// Returns nil when the monitor never answered at all; a partial or malformed
+    /// string is returned parsed, with the transfer's own notes folded into its
+    /// diagnostics, because a string that half-arrived is still evidence.
+    func readCapabilities(displayID: CGDirectDisplayID) -> DDCCapabilities? {
+        if let until = readQuarantineUntil[displayID], now() < until { return nil }
+
+        var reader = DDCCapabilitiesReader()
+        var notes: [String] = []
+        var offset: UInt16 = 0
+        var answered = false
+
+        loop: while true {
+            guard let fragment = requestCapabilityFragment(displayID: displayID, offset: offset) else {
+                if answered {
+                    notes.append("the monitor stopped answering the capabilities request at offset \(offset)")
+                }
+                break loop
+            }
+            answered = true
+            switch reader.accept(offset: fragment.offset, data: fragment.data) {
+            case .needMore(let next):
+                offset = next
+            case .complete:
+                break loop
+            case .failed(let reason):
+                notes.append(reason)
+                break loop
+            }
+        }
+
+        guard answered else { return nil }
+        return DDCCapabilities.parse(reader.text, transferNotes: reader.diagnostics + notes)
+    }
+
+    /// One capabilities fragment, retried like a VCP read.
+    ///
+    /// The validity closure requires the *requested* offset: a reply carrying a
+    /// different one is a stale answer to an earlier request, and appending it would
+    /// silently corrupt the string. Handing that rule to the transport also lets the
+    /// Intel path keep scanning I2C buses past a channel that answers with the wrong
+    /// frame, exactly as it does for Get VCP.
+    private func requestCapabilityFragment(
+        displayID: CGDirectDisplayID, offset: UInt16
+    ) -> (offset: UInt16, data: [UInt8])? {
+        for attempt in 0..<attempts {
+            let reply = transport.request(
+                DDCPacket.getCapabilities(offset: offset),
+                replyLength: DDCPacket.capabilitiesReplyLength,
+                from: displayID,
+                chipAddress: transport.chipAddress(for: displayID),
+                isValidReply: { DDCPacket.parseCapabilitiesReply($0)?.offset == offset }
+            )
+            if let parsed = reply.flatMap({ DDCPacket.parseCapabilitiesReply($0) }) { return parsed }
+            if attempt < attempts - 1 { sleep(retryDelay) }
+        }
+        return nil
+    }
+
     // MARK: - Diagnostics
 
     /// The read quarantine's state for one display, for the diagnostics report.

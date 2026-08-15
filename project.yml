@@ -59,6 +59,19 @@ targets:
       - path: Crisp/Models/DDCPacket.swift
       - path: Crisp/Models/DDCTransport.swift
       - path: Crisp/Models/DDCProtocolEngine.swift
+      # The declarative VCP registry (DDCFeatureRegistryTests): which codes exist,
+      # what shape their values are, which of them can cost the user something.
+      # `QuirkFeatureName` is an alias for its `DDCFeatureID`, so this file is a
+      # prerequisite of MonitorQuirks.swift below rather than an addition to it.
+      - path: Crisp/Models/DDCFeatureRegistry.swift
+      # The capabilities-string parser (DDCCapabilitiesTests). Every tolerance
+      # rule in it is pinned by a verbatim string from a real monitor, which is
+      # only possible because the parser is pure text in, values out.
+      - path: Crisp/Models/DDCCapabilities.swift
+      # The discovery rule (DDCFeatureDiscoveryTests): capabilities may widen what
+      # is offered and never narrow it, and nothing unproven is writable. Both are
+      # tests here rather than conventions in a review.
+      - path: Crisp/Models/DDCFeatureDiscovery.swift
       - path: Crisp/Models/RefreshRateFormat.swift
       - path: Crisp/Models/GammaPersistenceKey.swift
       - path: Crisp/Models/DisplayUUID.swift
@@ -127,6 +140,8 @@ targets:
       - path: Crisp/Models/DDCTransport.swift
       - path: Crisp/Models/DDCProtocolEngine.swift
       - path: Crisp/Models/DDCServiceMatcher.swift
+      - path: Crisp/Models/DDCCapabilities.swift
+      - path: Crisp/Models/DDCFeatureRegistry.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.crisp.cli

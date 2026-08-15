@@ -99,8 +99,30 @@ enum DisplayDiagnosticsService {
             currentInput: display.inputSourceSupported
                 ? DDCFeatureService.shared.resolvedInput(display.inputSource, for: display)
                 : nil,
-            brightnessKeys: brightnessKeys(for: display, among: displays)
+            brightnessKeys: brightnessKeys(for: display, among: displays),
+            capabilities: isBuiltin ? nil : await capabilities(for: display)
         )
+    }
+
+    // MARK: - Capabilities
+
+    /// The monitor's capabilities string, read here and nowhere else on the
+    /// app's normal paths.
+    ///
+    /// It is twenty-odd extra I2C transactions on the bus brightness shares, so
+    /// it happens when a human opens diagnostics and not on every display
+    /// refresh. Still read-only with respect to the monitor: 0xF3 asks a question
+    /// and changes nothing. `DDCService` caches the answer for as long as the
+    /// display stays plugged in, so re-opening the sheet costs nothing.
+    private static func capabilities(for display: DisplayInfo) async -> CapabilitiesDiagnostic {
+        guard let parsed = await DDCFeatureService.shared.refreshCapabilities(for: display) else {
+            return .unanswered(
+                reason: "the monitor did not answer the VCP 0xF3 capabilities request. That is common and "
+                    + "not a fault — plenty of monitors implement VCP reads and no capabilities string at "
+                    + "all — and Crisp needs it for nothing: it may only add a control, never remove one"
+            )
+        }
+        return CapabilitiesDiagnostic(parsed)
     }
 
     // MARK: - Identity

@@ -86,16 +86,17 @@ enum QuirkConfidence: String, Codable, Sendable, CaseIterable {
 
 // MARK: - Feature data
 
-/// A DDC feature by name. The name *is* the VCP code (MCCS fixes them), which is
-/// why the schema has no per-feature `vcp` override: a JSON file that strangers
-/// contribute must not be able to aim a write at an arbitrary register on the
-/// monitor's I2C bus.
-enum QuirkFeatureName: String, Codable, Sendable, CaseIterable {
-    case brightness  // VCP 0x10
-    case contrast    // VCP 0x12
-    case volume      // VCP 0x62
-    case input       // VCP 0x60
-}
+/// A DDC feature by name, in a quirks file.
+///
+/// This is `DDCFeatureID` — the registry's own identifier — and not a parallel
+/// enum, which is the point: a contributor can describe **any** feature the
+/// registry knows, and adding a VCP code stays a one-entry data change instead
+/// of a change in two files that can disagree.
+///
+/// The name is still the VCP code (MCCS fixes them), so the schema still has no
+/// per-feature `vcp` override: a JSON file that strangers contribute must not be
+/// able to aim a write at an arbitrary register on the monitor's I2C bus.
+typealias QuirkFeatureName = DDCFeatureID
 
 /// The raw DDC value range a monitor really honours.
 ///
@@ -157,8 +158,9 @@ struct QuirkFeature: Equatable, Sendable {
     let range: QuirkRange?
     let values: [QuirkInputValue]
     /// Defaults to the model's confidence when the file does not narrow it —
-    /// except for `input`, which never inherits above `reported` and whose codes
-    /// only reach `verified` by declaring it themselves (see `resolved`).
+    /// except for the destructive features (`input` and everything else the
+    /// registry marks that way), which never inherit above `reported` and whose
+    /// codes only reach `verified` by declaring it themselves (see `resolved`).
     let confidence: QuirkConfidence
     /// `values` is this model's *complete* port list, so the app may stop
     /// offering the generic VESA codes for it. Defaults to false: a half-mapped
@@ -382,13 +384,17 @@ private struct RawModel: Decodable {
 
 private extension RawModel.RawFeature {
     func resolved(default modelConfidence: QuirkConfidence, feature: QuirkFeatureName) throws -> QuirkFeature {
-        // `input` never inherits confidence. A contributor who marks the model
-        // `verified` after confirming brightness/contrast/volume, and forgets to
-        // re-declare `reported` on `input`, would otherwise promote guessed
-        // input codes straight past the confirmation dialog — and a wrong VCP
-        // 0x60 write is the one mistake the user cannot undo from the Mac.
-        // Every other feature inherits as documented.
-        let inherited: QuirkConfidence = feature == .input ? .reported : modelConfidence
+        // A destructive feature never inherits confidence. A contributor who
+        // marks the model `verified` after confirming brightness/contrast/volume,
+        // and forgets to re-declare `reported` on `input`, would otherwise
+        // promote guessed input codes straight past the confirmation dialog —
+        // and a wrong VCP 0x60 write is the one mistake the user cannot undo from
+        // the Mac. The same argument applies unchanged to every other code the
+        // registry marks destructive (0x04 restore factory defaults, 0xCA OSD
+        // lock, 0xD6 power), so the rule is keyed on that flag rather than on the
+        // one feature that needed it first. Everything else inherits as
+        // documented.
+        let inherited: QuirkConfidence = feature.spec.destructive ? .reported : modelConfidence
         let featureConfidence = confidence ?? inherited
         var parsedRange: QuirkRange?
         if let range {
@@ -403,7 +409,7 @@ private extension RawModel.RawFeature {
         // saying so itself. Inheriting it from the feature (which a file may
         // still declare `verified` wholesale) would put every unlisted-confidence
         // code in that file past the dialog on one line's worth of evidence.
-        let valueDefault: QuirkConfidence = feature == .input ? .reported : featureConfidence
+        let valueDefault: QuirkConfidence = feature.spec.destructive ? .reported : featureConfidence
         let parsedValues: [QuirkInputValue] = try (values ?? []).map { raw in
             guard let code = UInt16(exactly: raw.code) else {
                 throw QuirkParseError("\(feature.rawValue) value code \(raw.code) is out of range")
@@ -557,6 +563,10 @@ enum QuirkSource: String, Sendable {
     case database
     /// What the monitor answered to a live DDC read.
     case probe
+    /// The monitor's own capabilities string (DDC/CI 0xF3). Below the probe on
+    /// purpose, and allowed only to *widen* what is offered — see
+    /// `DDCFeatureDiscovery`.
+    case capabilities
     /// The VESA MCCS default.
     case standard
 }

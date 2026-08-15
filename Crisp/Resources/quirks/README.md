@@ -82,10 +82,50 @@ the code, and only the input-value one is ever shown to the user.
 | `workarounds` | Behaviours that need code, not a different number. |
 
 There is deliberately **no per-feature `vcp` field.** The feature name *is* the
-VCP code (`brightness` = 0x10, `contrast` = 0x12, `input` = 0x60,
-`volume` = 0x62); MCCS fixes them. Letting a contributed JSON file aim a write at
-an arbitrary register on the monitor's I2C bus is not a capability this database
+VCP code; MCCS fixes them, and `Crisp/Models/DDCFeatureRegistry.swift` is where
+the name becomes a number. Letting a contributed JSON file aim a write at an
+arbitrary register on the monitor's I2C bus is not a capability this database
 should have.
+
+### The feature names
+
+Every feature in the registry can be described here, not only the four Crisp
+has controls for. Recording what you measured for a feature the app cannot drive
+yet is useful — that is how it gets driven later.
+
+| Name | VCP | Shape | Writing it |
+|---|---|---|---|
+| `brightness` | 0x10 | dial | ordinary |
+| `contrast` | 0x12 | dial | ordinary |
+| `volume` | 0x62 | dial | ordinary |
+| `input` | 0x60 | codes | **destructive** |
+| `sharpness` | 0x87 | dial | ordinary |
+| `videoGainRed` / `videoGainGreen` / `videoGainBlue` | 0x16 / 0x18 / 0x1A | dial | ordinary |
+| `blackLevelRed` / `blackLevelGreen` / `blackLevelBlue` | 0x6C / 0x6E / 0x70 | dial | ordinary |
+| `colorTemperature` | 0x0C | dial | **destructive** |
+| `colorPreset` | 0x14 | codes | **destructive** |
+| `audioMute` | 0x8D | codes | **destructive** (values 3/4 blank the panel) |
+| `osdControl` | 0xCA | codes | **destructive** (see below) |
+| `powerMode` | 0xD6 | codes | **destructive** (value 5 powers the panel off) |
+| `restoreFactoryDefaults` | 0x04 | write-only | **destructive**, no undo |
+| `vcpVersion` | 0xDF | read-only | — |
+| `displayTechnologyType` | 0xB6 | read-only | — |
+
+**Why "destructive" is a schema-level fact and not advice.** ddcutil issue #153
+documents a monitor whose on-screen menu and physical buttons were disabled
+*permanently* by DDC commands — the panel kept working, its own controls never
+did again. So anything Crisp has not proved is read-only, and anything marked
+destructive is written only when the user asked for that specific write.
+
+A feature that is neither in the quirks database nor answers a live read is
+**not offered**, and one that is only advertised by the monitor's own
+capabilities string (DDC/CI `0xF3`) is offered **read-only**: a well-formed
+capabilities string is not evidence of support. The LG 27MD5KL advertises dozens
+of features and three of them respond. The reverse never happens — a
+capabilities string can only *add* a feature, never take one away — because the
+HP LP2480zx omits `0x10` and drives brightness perfectly well, and because the
+BenQ MA320U's own string advertises input codes `0F 11 12 15` while the panel is
+sitting on `19`.
 
 ### Feature level
 
@@ -135,14 +175,16 @@ code treats it differently. The BenQ MA320U entry in `benq.json` is `verified`
 for its ranges and `reported` for its one input code, which is exactly the
 honest description of what is known.
 
-### `input` never inherits confidence
+### Destructive features never inherit confidence
 
-Confidence otherwise flows model → feature → value. **`input` is the exception,
-and it is enforced in code, not by review.** Mark the model `verified` after
-confirming brightness, contrast and volume, forget to re-declare `reported` on
-`input`, and the naive rule would promote your guessed input codes straight past
-the confirmation dialog — the one mistake in this file that costs somebody their
-screen.
+Confidence otherwise flows model → feature → value. **Every feature marked
+destructive in the table above is the exception, and it is enforced in code, not
+by review.** Mark the model `verified` after confirming brightness, contrast and
+volume, forget to re-declare `reported` on `input`, and the naive rule would
+promote your guessed input codes straight past the confirmation dialog — the one
+mistake in this file that costs somebody their screen. The same argument applies
+unchanged to `powerMode`, `osdControl` and `restoreFactoryDefaults`, so the rule
+is keyed on the flag rather than on the one feature that needed it first.
 
 So the decoder caps what `input` inherits at `reported`, and **an input code only
 reaches `verified` by saying so on that code**:
@@ -197,6 +239,19 @@ make crispctl
 `vendor` and `product` are your `vendor` / `product` fields. **Never put the
 serial in the database** — quirks describe a model, not your individual unit.
 
+To see what the monitor claims about itself:
+
+```sh
+./crispctl-bin capabilities
+```
+
+That reads DDC/CI command `0xF3`, which is a question and changes nothing. It
+prints the raw string first — paste that verbatim into a pull request, because
+every tolerance rule in the parser came from a raw string somebody posted — then
+the codes it advertises. Treat the result as a list of things **worth
+measuring**, never as a list of things that work: the same monitor that
+advertises fifty codes will answer a read on a dozen of them.
+
 ### 2. Ranges
 
 `current/max` from `list` gives you the maximum the monitor claims. Confirm the
@@ -216,6 +271,26 @@ useful ends by hand, one at a time, restoring as you go:
   `saveAfterWrite`.
 
 Change one thing per run. Two changes at once and you have measured neither.
+
+Contrast, brightness, volume and the gain/black-level codes write straight away
+like that. The codes the registry marks **destructive** do not:
+
+```sh
+./crispctl-bin set power 5
+0xD6 Power mode is a destructive write.
+Value 5 turns the panel off at the power stage. Many monitors cannot be woken
+from it over DDC at all, because the DDC controller goes down with the panel.
+about to write: power = 5
+continue? [y/N]
+```
+
+Answer `y`, or pass `--force` to skip the prompt. In a script — anywhere stdin is
+not a terminal — there is no prompt and no write: `crispctl` prints the hazard and
+exits non-zero unless `--force` is on the command line. The gated codes are the
+ones `Crisp/Models/DDCFeatureRegistry.swift` marks `destructive: true`: `0x60`
+input source, `0xD6` power, `0x04` factory reset, `0x0C`/`0x14` colour, `0x8D`
+blank, `0xCA` OSD lock. `get`, `list`, `capabilities` and `watch` are reads and
+never ask.
 
 ### 3. Input codes — read this before you touch VCP 0x60
 

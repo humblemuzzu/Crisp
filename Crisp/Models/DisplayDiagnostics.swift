@@ -28,35 +28,20 @@ import Foundation
 // MARK: - Feature ↔ VCP
 
 extension QuirkFeatureName {
-    /// The MCCS VCP code this feature *is*.
+    /// The MCCS VCP code this feature *is*, from `DDCFeatureRegistry`.
     ///
-    /// Restated here rather than read from `DDCService.brightnessVCP` and friends
-    /// because this model is headless and `DDCService` is not. That is safe
-    /// precisely because MCCS fixes these four numbers: the quirks schema
-    /// deliberately has no per-feature `vcp` override for the same reason (see
-    /// `Crisp/Resources/quirks/README.md`), so there is no configuration to drift
-    /// out of sync with — only the constant, pinned by a test.
-    var vcpCode: UInt8 {
-        switch self {
-        case .brightness: return 0x10
-        case .contrast: return 0x12
-        case .volume: return 0x62
-        case .input: return 0x60
-        }
-    }
+    /// Read from the registry rather than from `DDCService.brightnessVCP` and
+    /// friends because this model is headless and `DDCService` is not — and read
+    /// from the registry rather than restated here, because a second copy of a
+    /// number is a second thing that can be wrong. The constants themselves are
+    /// still pinned by a test.
+    var vcpCode: UInt8 { spec.vcp }
 
     /// Title case, for the report's feature table.
-    var reportName: String {
-        switch self {
-        case .brightness: return "Brightness"
-        case .contrast: return "Contrast"
-        case .volume: return "Volume"
-        case .input: return "Input source"
-        }
-    }
+    var reportName: String { spec.title }
 
     /// `0x12`, the way the report and the monitor's documentation both spell it.
-    var vcpText: String { String(format: "0x%02X", vcpCode) }
+    var vcpText: String { spec.vcpText }
 }
 
 extension QuirkSource {
@@ -66,7 +51,19 @@ extension QuirkSource {
         case .userOverride: return "your own earlier choice"
         case .database: return "quirks database"
         case .probe: return "live probe"
+        case .capabilities: return "the monitor's capabilities string"
         case .standard: return "MCCS default"
+        }
+    }
+}
+
+extension DDCCapabilities.Validity {
+    /// How much of the capabilities string survived, in words.
+    var reportText: String {
+        switch self {
+        case .valid: return "every segment parsed, nothing repaired"
+        case .usable: return "parsed after repairs — see the parser notes"
+        case .invalid: return "nothing usable came out of it"
         }
     }
 }
@@ -320,6 +317,61 @@ struct QuirkMatchDiagnostic: Equatable, Sendable {
     }
 }
 
+// MARK: - Capabilities string
+
+/// The monitor's own capabilities string (DDC/CI command 0xF3), verbatim, plus
+/// what Crisp made of it.
+///
+/// The raw text is carried unaltered and printed unaltered. Every tolerance rule
+/// in `DDCCapabilities` exists because somebody posted a raw string from a
+/// monitor that broke a parser; a report that prints only this parser's *opinion*
+/// of the string cannot produce the next one of those. It is a model fact, not a
+/// per-unit one — two units of the same monitor send the same string — so it is
+/// not redacted.
+struct CapabilitiesDiagnostic: Equatable, Sendable {
+    /// Exactly what came off the wire.
+    let raw: String
+    let validity: DDCCapabilities.Validity
+    /// Advertised VCP codes, named from `DDCFeatureRegistry` where it knows one.
+    let advertised: [String]
+    /// Capability fields this parser does not interpret. Preserved and listed
+    /// because the spec's own rule is to discard them, which means nobody ever
+    /// finds out what monitors are actually sending.
+    let unknownSegments: [String]
+    /// `mccs_ver()`, when it parsed. Never treated as truth — monitors
+    /// contradict feature 0xDF freely — so it is reported, not acted on.
+    let mccsVersion: String?
+    let notes: [String]
+
+    /// Projects a parse result into the report's shape.
+    init(_ capabilities: DDCCapabilities) {
+        raw = capabilities.raw
+        validity = capabilities.validity
+        advertised = capabilities.features.map { feature in
+            guard let spec = DDCFeatureRegistry.feature(forVCP: feature.code) else { return feature.codeText }
+            return "\(feature.codeText) \(spec.title.lowercased())"
+        }
+        unknownSegments = capabilities.unknownSegments.map(\.name)
+        mccsVersion = capabilities.mccsVersion?.description
+        notes = capabilities.diagnostics
+    }
+
+    private init(raw: String, validity: DDCCapabilities.Validity, notes: [String]) {
+        self.raw = raw
+        self.validity = validity
+        self.advertised = []
+        self.unknownSegments = []
+        self.mccsVersion = nil
+        self.notes = notes
+    }
+
+    /// The monitor never answered the request. Common and not a fault: plenty of
+    /// monitors implement VCP reads and not 0xF3.
+    static func unanswered(reason: String) -> CapabilitiesDiagnostic {
+        CapabilitiesDiagnostic(raw: "", validity: .invalid, notes: [reason])
+    }
+}
+
 // MARK: - Brightness keys
 
 /// Why F1/F2 are or are not reaching this display. Projected from
@@ -389,6 +441,10 @@ struct DisplayDiagnostics: Equatable, Sendable {
     /// report cannot print a different label from the one the user sees.
     let currentInput: ResolvedInput?
     let brightnessKeys: BrightnessKeyDiagnostic
+    /// The 0xF3 capabilities string. `nil` when it was not asked for at all —
+    /// which is the state for the built-in panel, and for any collection that
+    /// deliberately kept the extra I²C transactions off the bus.
+    var capabilities: CapabilitiesDiagnostic? = nil
 
     func feature(_ name: QuirkFeatureName) -> FeatureDiagnostic? {
         features.first { $0.feature == name }
@@ -580,6 +636,55 @@ enum DiagnosticReport {
                 feature.rangeSourceReportText
             ]))
         }
+        if let capabilities = display.capabilities {
+            out.append("")
+            out.append(contentsOf: capabilitiesSection(capabilities))
+        }
+        return out
+    }
+
+    /// The capabilities string, verbatim, then what was derived from it.
+    ///
+    /// Verbatim first and in a fenced block, because the raw string is the
+    /// evidence and everything under it is this app's reading of it. A maintainer
+    /// looking at a monitor nobody has seen before needs the bytes, not the
+    /// summary — and the fence is what stops a string full of pipes and parens
+    /// from destroying the tables above it.
+    private static func capabilitiesSection(_ capabilities: CapabilitiesDiagnostic) -> [String] {
+        var out = ["**Capabilities string (VCP 0xF3)** — \(capabilities.validity.rawValue)", ""]
+        if capabilities.raw.isEmpty {
+            out.append("_(the monitor returned nothing)_")
+        } else {
+            // Backticks inside a capabilities string would end the fence early;
+            // no monitor has been seen sending one, but the whole point of this
+            // block is that the string is untrusted input from a stranger's
+            // hardware.
+            out.append("```")
+            out.append(singleLine(capabilities.raw).replacingOccurrences(of: "`", with: "'"))
+            out.append("```")
+        }
+        out.append("")
+        var rows: [(String, String)] = [
+            ("Validity", capabilities.validity.reportText),
+            ("MCCS version claimed", capabilities.mccsVersion ?? "not stated"),
+            ("Advertised VCP codes", capabilities.advertised.isEmpty
+                ? "none" : capabilities.advertised.joined(separator: ", ")),
+            ("Unsupported fields kept", capabilities.unknownSegments.isEmpty
+                ? "none" : capabilities.unknownSegments.joined(separator: ", "))
+        ]
+        for note in capabilities.notes {
+            rows.append(("Parser note", note))
+        }
+        out.append(contentsOf: table(header: ("Item", "Value"), rows: rows))
+        out.append("")
+        // Said in the report because it is the question every reader of this
+        // section asks next, and the answer is a rule rather than an omission.
+        out.append(
+            "Crisp uses this string only to *offer* a control it would otherwise not know about, "
+                + "never to take one away: a code missing here is no evidence at all — the HP LP2480zx "
+                + "omits 0x10 and drives brightness perfectly well — and a code listed here is offered "
+                + "read-only until a live read confirms it."
+        )
         return out
     }
 

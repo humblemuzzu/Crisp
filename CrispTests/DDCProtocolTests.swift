@@ -492,6 +492,149 @@ final class DDCProtocolTests: XCTestCase {
         XCTAssertEqual(engine.read(displayID: display, command: brightness)?.current, 25)
     }
 
+    // MARK: - Capabilities (VCP 0xF3 / reply 0xE3)
+
+    /// *Capabilities request wire format.* Pins every byte, including the 0x83
+    /// length byte (three payload bytes: the opcode and a 16-bit offset) and the
+    /// checksum seeded with the 0x6E destination address.
+    /// Kills mutation: 0x82/0x01 framing borrowed from Get VCP, a byte-swapped
+    /// offset, or a checksum over the payload without the leading source byte.
+    func testCapabilitiesRequestFrameIsExactWireFormat() {
+        XCTAssertEqual(DDCPacket.getCapabilities(offset: 0), [0x51, 0x83, 0xF3, 0x00, 0x00, 0x4F])
+        XCTAssertEqual(
+            Array(DDCPacket.getCapabilities(offset: 0x0120).prefix(5)),
+            [0x51, 0x83, 0xF3, 0x01, 0x20],
+            "high byte first"
+        )
+        XCTAssertNotEqual(
+            DDCPacket.getCapabilities(offset: 1).last,
+            DDCPacket.getCapabilities(offset: 2).last,
+            "the offset is inside the checksum"
+        )
+    }
+
+    /// *The reply's length byte decides where the data ends.* A capabilities
+    /// fragment is variable-length, so a parser that assumed a fixed size would
+    /// append the reply buffer's uninitialised tail to the string.
+    /// Kills mutation: taking the data as "everything after byte 5".
+    func testCapabilitiesReplyLengthByteBoundsTheData() {
+        var reply: [UInt8] = [0x6E, 0x80 | 7, 0xE3, 0x00, 0x04, 0x41, 0x42, 0x43, 0x44]
+        reply.append(reply.reduce(UInt8(0x50)) { $0 ^ $1 })
+        reply += [0xFF, 0xFF, 0xFF]  // buffer tail the monitor never wrote
+
+        let parsed = DDCPacket.parseCapabilitiesReply(reply)
+        XCTAssertEqual(parsed?.offset, 4)
+        XCTAssertEqual(parsed?.data, [0x41, 0x42, 0x43, 0x44])
+    }
+
+    /// *A zero-data fragment parses as an empty fragment, not as a failure.* It
+    /// is the spec's only end-of-string signal, so rejecting it would mean never
+    /// finishing a transfer.
+    /// Kills mutation: requiring at least one data byte.
+    func testCapabilitiesReplyWithNoDataIsValid() {
+        var reply: [UInt8] = [0x6E, 0x80 | 3, 0xE3, 0x00, 0x09]
+        reply.append(reply.reduce(UInt8(0x50)) { $0 ^ $1 })
+        let parsed = DDCPacket.parseCapabilitiesReply(reply)
+        XCTAssertEqual(parsed?.offset, 9)
+        XCTAssertEqual(parsed?.data, [])
+    }
+
+    /// *Malformed capability replies are rejected, exactly like VCP replies.* A
+    /// wedged controller streams noise that acks reads, so the signature and the
+    /// checksum both have to hold before any byte is believed.
+    /// Kills mutation: dropping the checksum test, the 0xE3 opcode test, or the
+    /// length guard.
+    func testCapabilitiesReplyRejectsMalformedFrames() {
+        var good: [UInt8] = [0x6E, 0x80 | 4, 0xE3, 0x00, 0x00, 0x41]
+        good.append(good.reduce(UInt8(0x50)) { $0 ^ $1 })
+
+        XCTAssertNotNil(DDCPacket.parseCapabilitiesReply(good))
+        XCTAssertNil(DDCPacket.parseCapabilitiesReply([]))
+        XCTAssertNil(DDCPacket.parseCapabilitiesReply(Array(good.prefix(4))))
+
+        var badChecksum = good
+        badChecksum[badChecksum.count - 1] ^= 0xFF
+        XCTAssertNil(DDCPacket.parseCapabilitiesReply(badChecksum), "checksum")
+
+        var badOpcode = good
+        badOpcode[2] = 0x02
+        XCTAssertNil(DDCPacket.parseCapabilitiesReply(badOpcode), "opcode")
+
+        var badLength = good
+        badLength[1] = 0x02  // high bit clear: not a length byte at all
+        XCTAssertNil(DDCPacket.parseCapabilitiesReply(badLength), "length byte")
+    }
+
+    /// *The engine reassembles a multi-fragment string and parses it.* End to end
+    /// over the seam, with a fragment size that forces four round trips.
+    /// Kills mutation: reading only the first fragment, or requesting a fixed
+    /// offset every time.
+    func testEngineReadsCapabilitiesAcrossFragments() {
+        let text = "(prot(monitor)type(lcd)model(TEST)vcp(10 12 60(11 12))mccs_ver(2.2))"
+        let fake = FakeDDCTransport()
+        fake.capabilityFragmentSize = 20
+        fake.setCapabilities(text, displayID: display)
+        let engine = makeEngine(fake)
+
+        let caps = engine.readCapabilities(displayID: display)
+
+        XCTAssertEqual(caps?.raw, text)
+        XCTAssertEqual(caps?.validity, .valid)
+        XCTAssertEqual(caps?.model, "TEST")
+        XCTAssertTrue(caps?.advertises(0x60) ?? false)
+        // Offsets asked for, in order: 0, 20, 40, 60, then the terminating one.
+        let offsets = fake.frames(matchingOpcode: 0x83).map { (UInt16($0.bytes[3]) << 8) | UInt16($0.bytes[4]) }
+        XCTAssertEqual(offsets, [0, 20, 40, 60, UInt16(text.utf8.count)])
+    }
+
+    /// *A monitor that does not implement 0xF3 gets nil, not an empty string.*
+    /// Very common, and completely benign: it must not read as "this monitor's
+    /// capabilities are empty", which is a different claim.
+    /// Kills mutation: returning a parsed empty result when nothing answered.
+    func testEngineReturnsNilWhenCapabilitiesAreUnsupported() {
+        let fake = FakeDDCTransport()
+        let engine = makeEngine(fake)
+        XCTAssertNil(engine.readCapabilities(displayID: display))
+    }
+
+    /// *A transfer that dies half way keeps what arrived, and says so.* A partial
+    /// capabilities string is still evidence; discarding it would throw away the
+    /// only clue a bug report has.
+    /// Kills mutation: returning nil once any fragment fails.
+    func testEngineKeepsAPartialCapabilitiesStringAndReportsTheBreak() {
+        let fake = FakeDDCTransport()
+        fake.capabilityFragmentSize = 16
+        fake.setCapabilities("(prot(monitor)vcp(10 12)mccs_ver(2.2))", displayID: display)
+        // Answer the first fragment, then go quiet for every retry of the second.
+        fake.queueReadFaults(
+            [.healthy] + Array(repeating: .noResponse, count: 12), displayID: display, code: 0xF3
+        )
+        let engine = makeEngine(fake)
+
+        let caps = engine.readCapabilities(displayID: display)
+
+        XCTAssertEqual(caps?.raw, "(prot(monitor)vc", "one fragment's worth, kept")
+        XCTAssertEqual(caps?.validity, .usable)
+        XCTAssertEqual(caps?.protocolName, "monitor", "what arrived is still parsed")
+        XCTAssertEqual(caps?.diagnostics.contains { $0.contains("stopped answering") }, true)
+    }
+
+    /// *A quarantined display is not asked for its capabilities.* The quarantine
+    /// exists because a wedged controller degrades further under traffic, and a
+    /// capabilities read is twenty-odd transactions — the worst possible thing to
+    /// aim at a display that has just failed six reads in a row.
+    /// Kills mutation: reading capabilities without consulting the quarantine.
+    func testQuarantinedDisplayIsNotAskedForCapabilities() {
+        let fake = FakeDDCTransport()
+        fake.setCapabilities("(prot(monitor)vcp(10))", displayID: display)
+        let engine = makeEngine(fake)
+        for _ in 0..<6 { _ = engine.read(displayID: display, command: brightness) }
+        let framesBefore = fake.sentFrames.count
+
+        XCTAssertNil(engine.readCapabilities(displayID: display))
+        XCTAssertEqual(fake.sentFrames.count, framesBefore, "nothing went on the bus")
+    }
+
     // MARK: - Helpers
 
     private func makeEngine(

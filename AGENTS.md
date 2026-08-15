@@ -156,6 +156,9 @@ tested headlessly.
 | Concern | Files |
 |---|---|
 | DDC/CI I2C (read/write/retry/quarantine) | `Crisp/Services/DDCService.swift` |
+| **Which VCP codes exist, and what each costs to get wrong** | `Crisp/Models/DDCFeatureRegistry.swift` |
+| **Capabilities string (0xF3) parsing + fragment reassembly** | `Crisp/Models/DDCCapabilities.swift` |
+| **Discovery rule + the write gate** | `Crisp/Models/DDCFeatureDiscovery.swift` |
 | Contrast, input, persistence, reconnect reapply | `Crisp/Services/DDCFeatureService.swift` |
 | Display discovery / reconnect flow | `Crisp/Services/DisplayManager.swift` |
 | Brightness write path + coalescing | `Crisp/Services/BrightnessService.swift` |
@@ -236,6 +239,22 @@ event tap armed` once granted, and `brightness key: adjusting external display
   cable, not measured. Calibrating the mapping for a monitor = note the value
   that corresponds to each physical port (switch via the monitor's OSD, then
   re-read, so you never write `0x60` blind). Do not guess.
+- **Adding a VCP code is a data change.** `Crisp/Models/DDCFeatureRegistry.swift`
+  holds the code, the value shape, the MCCS access and — load-bearing — whether
+  writing it is destructive and what the hazard is. `DDCFeatureService` is
+  generic over that table, the quirks schema accepts every name in it, and
+  `DDCFeatureDiscovery` decides what is offered and what may be written. The
+  default for anything unproven is **read-only**: ddcutil issue #153 documents a
+  monitor whose OSD and physical buttons were disabled permanently by DDC
+  commands. Destructive codes (0x60, 0xD6, 0x04, 0x0C, 0x14, 0x8D, 0xCA) go
+  through the *existing* input confirmation gate, never a second one.
+- **The capabilities string may only widen, never narrow.** Read on demand only
+  (diagnostics, `crispctl capabilities`) because it is twenty-odd extra I²C
+  transactions. The MA320U's own string is the argument: it advertises 0x60
+  values `0F 11 12 15` while the panel sits on `19`, so filtering the input menu
+  by it would hide the port the user is looking through. A well-formed parse is
+  also not evidence of support (the LG 27MD5KL advertises dozens and answers
+  three), so a capabilities-only feature is offered read-only and unproven.
 - **Reconnect reapply of input is opt-in per display and off by default.**
 - The user runs BetterDisplay-free now; if it ever returns, this fork must not
   fight it (both write the same DDC registers; last writer wins).

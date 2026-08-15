@@ -42,6 +42,65 @@ struct ContrastSliderView: View {
     }
 }
 
+/// The confirmation gate for a destructive DDC write.
+///
+/// There is exactly one of these in the app, and `DDCFeatureDiscovery.authorize`
+/// refuses every destructive write that did not come through it
+/// (`Authorization.userConfirmed`). It is written as a modifier over an arbitrary
+/// payload rather than as part of the input menu so that the next destructive
+/// feature — power mode, OSD lock, restore factory defaults, all of which are in
+/// `DDCFeatureRegistry` and none of which has a control yet — reuses this dialog
+/// instead of growing a second one that is subtly more permissive.
+///
+/// The caller supplies the wording because the wording is the whole value of the
+/// dialog: "are you sure?" tells a user nothing, while "if nothing is attached to
+/// that port the screen goes blank and only the monitor's buttons can bring it
+/// back" tells them exactly what they are deciding.
+struct DestructiveDDCWriteConfirmation<Payload>: ViewModifier {
+    let title: LocalizedStringKey
+    let confirmLabel: LocalizedStringKey
+    @Binding var pending: Payload?
+    let message: (Payload) -> String
+    let confirm: (Payload) -> Void
+
+    func body(content: Content) -> some View {
+        content.alert(
+            title,
+            isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
+            presenting: pending
+        ) { payload in
+            Button(confirmLabel, role: .destructive) {
+                confirm(payload)
+                pending = nil
+            }
+            // The name is a literal, it just lives at the call site ("Switch"),
+            // which is also where it has to be for the string catalog to extract
+            // it. Restated here so the button carries a name of its own rather
+            // than relying on a value the static gate cannot follow.
+            .accessibilityLabel(Text(confirmLabel))
+            Button("Cancel", role: .cancel) { pending = nil }
+        } message: { payload in
+            Text(message(payload))
+        }
+    }
+}
+
+extension View {
+    /// Asks before a destructive DDC write. See `DestructiveDDCWriteConfirmation`.
+    func destructiveDDCWriteConfirmation<Payload>(
+        title: LocalizedStringKey,
+        confirmLabel: LocalizedStringKey,
+        pending: Binding<Payload?>,
+        message: @escaping (Payload) -> String,
+        confirm: @escaping (Payload) -> Void
+    ) -> some View {
+        modifier(DestructiveDDCWriteConfirmation(
+            title: title, confirmLabel: confirmLabel,
+            pending: pending, message: message, confirm: confirm
+        ))
+    }
+}
+
 /// DDC input-source selector (VCP 0x60). Shows the current input — labelled from
 /// the monitor quirks database where a human has mapped this model's codes, and
 /// otherwise from the VESA table or the raw code — plus a per-display "reapply on
@@ -112,19 +171,16 @@ struct InputSourceMenuRow: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 6)
         }
-        .alert(
-            "Switch input?",
-            isPresented: Binding(get: { pendingInput != nil }, set: { if !$0 { pendingInput = nil } }),
-            presenting: pendingInput
-        ) { input in
-            Button("Switch", role: .destructive) {
-                DDCFeatureService.shared.setInputSource(input.code, for: display)
-                pendingInput = nil
-            }
-            Button("Cancel", role: .cancel) { pendingInput = nil }
-        } message: { input in
-            Text(confirmationMessage(for: input))
-        }
+        // The app's one destructive-write dialog, not a copy of it: the same
+        // modifier is what a future power-mode or OSD-lock control has to use,
+        // and `DDCFeatureDiscovery.authorize` refuses anything that skipped it.
+        .destructiveDDCWriteConfirmation(
+            title: "Switch input?",
+            confirmLabel: "Switch",
+            pending: $pendingInput,
+            message: confirmationMessage(for:),
+            confirm: { DDCFeatureService.shared.setInputSource($0.code, for: display) }
+        )
     }
 
     /// Applies a verified code straight away; anything else asks first.

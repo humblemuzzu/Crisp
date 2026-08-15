@@ -81,8 +81,24 @@ final class FakeDDCTransport: DDCTransport, @unchecked Sendable {
     }
 
     /// Queues one fault per upcoming read; reads past the end of the queue succeed.
+    ///
+    /// Capabilities requests (DDC/CI 0xF3) queue under code `0xF3`, so a test can
+    /// script a monitor that goes quiet part-way through the transfer the same
+    /// way it scripts one that drops a VCP read.
     func queueReadFaults(_ faults: [Fault], displayID: CGDirectDisplayID, code: UInt8) {
         readFaults[Key(displayID, code)] = faults
+    }
+
+    /// The capabilities string this fake display answers 0xF3 with. Unset means a
+    /// monitor that does not implement the capabilities request at all, which is
+    /// a large minority of real ones.
+    private var capabilityStrings: [CGDirectDisplayID: [UInt8]] = [:]
+    /// Data bytes per fragment. Real monitors send 32; a test can shrink it to
+    /// exercise the fragment loop without a long string.
+    var capabilityFragmentSize = 32
+
+    func setCapabilities(_ text: String, displayID: CGDirectDisplayID) {
+        capabilityStrings[displayID] = Array(text.utf8)
     }
 
     /// Queues one outcome per upcoming write; writes past the end of the queue ack.
@@ -152,6 +168,18 @@ final class FakeDDCTransport: DDCTransport, @unchecked Sendable {
     ) -> [UInt8]? {
         sentFrames.append(Frame(displayID: displayID, chipAddress: chipAddress, bytes: frame))
         guard frame.count >= 5 else { return nil }
+
+        // A capabilities request is a different frame shape: the opcode is at
+        // byte 2 and bytes 3-4 are an offset, not a VCP code.
+        if frame[2] == 0xF3 {
+            let fault = nextReadFault(Key(displayID, 0xF3))
+            if fault == .noResponse { return nil }
+            let offset = (UInt16(frame[3]) << 8) | UInt16(frame[4])
+            guard let reply = capabilitiesReply(displayID: displayID, offset: offset, length: replyLength),
+                  isValidReply(reply) else { return nil }
+            return reply
+        }
+
         let command = frame[3]
         let key = Key(displayID, command)
 
@@ -214,6 +242,25 @@ final class FakeDDCTransport: DDCTransport, @unchecked Sendable {
             guard let value = values[key] else { return nil }
             return Self.reply(command: command, current: value.current, max: value.max, length: length)
         }
+    }
+
+    /// One capabilities fragment: `[0x6E, 0x80|len, 0xE3, offsetHi, offsetLo, data…, checksum]`.
+    /// A request past the end of the string answers with zero data bytes, which
+    /// is the spec's only end-of-string signal.
+    private func capabilitiesReply(displayID: CGDirectDisplayID, offset: UInt16, length: Int) -> [UInt8]? {
+        guard let text = capabilityStrings[displayID] else { return nil }
+        let start = min(Int(offset), text.count)
+        let data = Array(text[start..<min(start + capabilityFragmentSize, text.count)])
+        var frame: [UInt8] = [
+            0x6E, UInt8(0x80 | (3 + data.count)), 0xE3,
+            UInt8((offset >> 8) & 0xFF), UInt8(offset & 0xFF)
+        ]
+        frame += data
+        var checksum: UInt8 = 0x50
+        for byte in frame { checksum ^= byte }
+        frame.append(checksum)
+        while frame.count < length { frame.append(0x00) }
+        return frame
     }
 
     private func nextReadFault(_ key: Key) -> Fault {

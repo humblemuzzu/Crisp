@@ -81,6 +81,62 @@ enum DDCPacket {
         return body + [checksum(seed: destinationAddress, over: body[...])]
     }
 
+    /// Capabilities Request frame: `[0x51, 0x83, 0xF3, offsetHigh, offsetLow, checksum]`.
+    ///
+    /// The capabilities string is longer than one I2C transaction, so it is read in
+    /// fragments: each request names a byte offset and the reply echoes it back. The
+    /// loop that drives this lives in `DDCCapabilitiesReader` (the rules) and
+    /// `DDCProtocolEngine.readCapabilities` (the transport).
+    static func getCapabilities(offset: UInt16) -> [UInt8] {
+        let body: [UInt8] = [
+            sourceAddress, 0x83, 0xF3,
+            UInt8((offset >> 8) & 0xFF),
+            UInt8(offset & 0xFF)
+        ]
+        return body + [checksum(seed: destinationAddress, over: body[...])]
+    }
+
+    /// Bytes requested for a Capabilities reply.
+    ///
+    /// The frame is at most 38 bytes: address, length, opcode, two offset bytes, up to
+    /// 32 data bytes and the checksum. One spare is asked for, the same convention
+    /// `replyLength` uses for Get VCP.
+    static let capabilitiesReplyLength = 39
+
+    /// Parses a Capabilities Reply, returning nil for anything that is not provably one.
+    ///
+    /// Reply layout:
+    ///   [0] source address (0x6E)
+    ///   [1] length byte (0x80 | payload length)
+    ///   [2] Capabilities Reply opcode (0xE3)
+    ///   [3][4] offset this fragment answers, high/low
+    ///   [5…] the fragment's data — zero bytes of it means end of string
+    ///   [last] checksum
+    ///
+    /// The length byte is load-bearing here in a way it is not for Get VCP: a
+    /// capabilities fragment is variable-length, so the frame carries its own end and a
+    /// parser that assumed a fixed size would append the buffer's uninitialised tail to
+    /// the string. Everything else is the same discipline as `parseGetVCPReply` — the
+    /// signature is checked before the bytes are believed, and the DDC/CI checksum must
+    /// match, because a wedged controller streams noise that acks reads.
+    static func parseCapabilitiesReply(_ reply: [UInt8]) -> (offset: UInt16, data: [UInt8])? {
+        guard reply.count >= 6,
+              reply[0] == destinationAddress,
+              reply[1] & 0x80 == 0x80,
+              reply[2] == 0xE3
+        else { return nil }
+
+        // The payload is the opcode, the two offset bytes and the data.
+        let payloadLength = Int(reply[1] & 0x7F)
+        guard payloadLength >= 3, reply.count >= payloadLength + 3 else { return nil }
+        guard checksum(seed: replySeed, over: reply[0...(payloadLength + 1)]) == reply[payloadLength + 2] else {
+            return nil
+        }
+
+        let offset = (UInt16(reply[3]) << 8) | UInt16(reply[4])
+        return (offset: offset, data: Array(reply[5..<(payloadLength + 2)]))
+    }
+
     /// Parses a Get VCP Feature reply, returning nil for anything that is not provably
     /// a well-formed answer to `command`.
     ///

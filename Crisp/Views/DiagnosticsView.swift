@@ -377,6 +377,11 @@ private struct DisplayDiagnosticsCard: View {
                 }
             }
 
+            if let capabilities = diagnostics.capabilities {
+                Divider()
+                CapabilitiesSection(capabilities: capabilities)
+            }
+
             HStack {
                 Spacer()
                 Button("Copy Monitor Report", action: onReportMonitor)
@@ -392,6 +397,62 @@ private struct DisplayDiagnosticsCard: View {
 
     private func perUnit(_ value: String) -> String {
         privacy.includePerUnitIdentifiers ? value : "hidden — see the checkbox below"
+    }
+}
+
+/// The monitor's own capabilities string, raw first.
+///
+/// Selectable and monospaced because the raw string is the useful artefact: a
+/// user who is about to file an issue about a monitor nobody has seen can select
+/// it and paste it, and every tolerance rule in `DDCCapabilities` came from
+/// somebody doing exactly that. What Crisp made of it goes underneath, clearly
+/// separated from the evidence.
+private struct CapabilitiesSection: View {
+    let capabilities: CapabilitiesDiagnostic
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(verbatim: "Capabilities string (VCP 0xF3) — \(capabilities.validity.rawValue)")
+                .font(.caption.weight(.semibold))
+
+            if capabilities.raw.isEmpty {
+                Text(verbatim: capabilities.notes.first ?? "The monitor returned nothing.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(verbatim: capabilities.raw)
+                    .font(.system(.caption2, design: .monospaced))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 4))
+
+                DiagnosticRow(label: "Validity", value: capabilities.validity.reportText)
+                DiagnosticRow(label: "MCCS version claimed", value: capabilities.mccsVersion ?? "not stated")
+                DiagnosticRow(
+                    label: "Advertised codes",
+                    value: capabilities.advertised.isEmpty
+                        ? "none" : capabilities.advertised.joined(separator: ", ")
+                )
+                if !capabilities.unknownSegments.isEmpty {
+                    DiagnosticRow(
+                        label: "Fields Crisp ignores",
+                        value: capabilities.unknownSegments.joined(separator: ", ")
+                    )
+                }
+                // The rule, where the list of advertised codes is: without it the
+                // obvious reading of this block is that the codes not listed are
+                // unavailable, which is exactly the mistake it exists to prevent.
+                Text(verbatim: "Only ever used to offer a control Crisp would not otherwise know about — "
+                    + "never to remove one, and never over a live read.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

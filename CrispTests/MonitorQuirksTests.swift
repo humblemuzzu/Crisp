@@ -135,11 +135,56 @@ final class MonitorQuirksTests: XCTestCase {
     func testUnknownFeatureNameIsIgnoredNotFatal() throws {
         let json = """
         { "vendor": "0x1234", "models": [ { "product": "0x1",
-          "features": { "contrast": { "range": [0, 100] }, "sharpness": { "range": [0, 10] } } } ] }
+          "features": { "contrast": { "range": [0, 100] }, "warpFactor": { "range": [0, 10] } } } ] }
         """
         let model = try XCTUnwrap(decode(json)?.models.first)
         XCTAssertNotNil(model.feature(.contrast))
         XCTAssertEqual(model.features.count, 1)
+    }
+
+    /// The schema describes **any** registry feature, not the four that happened
+    /// to be hand-coded first. `sharpness` was an unknown name until the registry
+    /// existed; a contributor can now write down what they measured for it, which
+    /// is the whole point of making a VCP code a data change.
+    /// Kills mutation: hard-coding the decoder's feature names back to the four.
+    func testAnyRegistryFeatureCanBeDescribed() throws {
+        let json = """
+        { "vendor": "0x1234", "models": [ { "product": "0x1", "confidence": "verified",
+          "features": {
+            "sharpness": { "range": [0, 10] },
+            "videoGainRed": { "range": [0, 100] },
+            "powerMode": { "confidence": "verified" }
+          } } ] }
+        """
+        let model = try XCTUnwrap(decode(json)?.models.first)
+        XCTAssertEqual(model.feature(.sharpness)?.range, QuirkRange(min: 0, max: 10))
+        XCTAssertEqual(model.feature(.videoGainRed)?.range, QuirkRange(min: 0, max: 100))
+        XCTAssertEqual(model.feature(.sharpness)?.confidence, .verified,
+                       "a harmless feature still inherits the model's confidence")
+    }
+
+    /// The confidence cap generalises with the registry: every destructive
+    /// feature, not just `input`, refuses to inherit `verified` from the model.
+    /// 0xD6 value 5 turns the panel off and 0x04 wipes the monitor's settings —
+    /// the same "one careless line costs somebody their screen" argument that put
+    /// the cap on `input` in the first place.
+    /// Kills mutation: keying the cap on `feature == .input` instead of on the
+    /// registry's `destructive` flag.
+    func testDestructiveFeaturesNeverInheritVerifiedConfidence() throws {
+        let json = """
+        { "vendor": "0x1234", "models": [ { "product": "0x1", "confidence": "verified",
+          "features": {
+            "powerMode": {}, "restoreFactoryDefaults": {}, "osdControl": {},
+            "colorPreset": {}, "sharpness": {}
+          } } ] }
+        """
+        let model = try XCTUnwrap(decode(json)?.models.first)
+        for feature in [QuirkFeatureName.powerMode, .restoreFactoryDefaults, .osdControl, .colorPreset] {
+            XCTAssertEqual(model.feature(feature)?.confidence, .reported,
+                           "\(feature.rawValue) is destructive and must not inherit verified")
+        }
+        XCTAssertEqual(model.feature(.sharpness)?.confidence, .verified,
+                       "and the cap must not spread to features that cost nothing")
     }
 
     // MARK: - Malformed input is skipped, never thrown
