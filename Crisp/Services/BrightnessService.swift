@@ -194,12 +194,9 @@ final class BrightnessService: @unchecked Sendable {
     /// UUID-keyed like GammaPersistenceKey (issue #32): displayIDs are reused
     /// across reconnects and reboots, so the old raw-ID key could hand this
     /// display's dimming factor to a different physical display later.
-    private func softBrightnessKey(for displayID: CGDirectDisplayID) -> String {
-        if let uuid = Self.displayUUIDString(for: displayID) {
-            return "crisp.softBrightness.uuid.\(uuid)"
-        }
-        // UUID lookup failed (display just went offline): legacy raw-ID key.
-        return Self.legacySoftBrightnessKey(for: displayID)
+    /// nil when the display just went offline and CG can no longer name it.
+    private func softBrightnessUUID(for displayID: CGDirectDisplayID) -> DisplayUUID? {
+        Self.displayUUIDString(for: displayID).map(DisplayUUID.init)
     }
 
     private static func legacySoftBrightnessKey(for displayID: CGDirectDisplayID) -> String {
@@ -225,22 +222,34 @@ final class BrightnessService: @unchecked Sendable {
         for display in displays {
             let legacyKey = Self.legacySoftBrightnessKey(for: display.displayID)
             guard defaults.object(forKey: legacyKey) != nil else { continue }
-            let uuidKey = "crisp.softBrightness.uuid.\(display.displayUUID)"
-            if defaults.object(forKey: uuidKey) == nil {
-                defaults.set(defaults.double(forKey: legacyKey), forKey: uuidKey)
+            let legacyFactor = defaults.double(forKey: legacyKey)
+            DisplayStateStore.shared.update(display.stateUUID) { state in
+                if state.softwareBrightnessFactor == nil { state.softwareBrightnessFactor = legacyFactor }
             }
             defaults.removeObject(forKey: legacyKey)
         }
     }
 
     private func saveSoftwareBrightness(factor: Double, for displayID: CGDirectDisplayID) {
-        UserDefaults.standard.set(factor, forKey: softBrightnessKey(for: displayID))
+        guard let uuid = softBrightnessUUID(for: displayID) else {
+            // The display went offline mid-write. Rule #3 forbids keying the
+            // store on the volatile displayID, so this one degenerate case still
+            // lands in the legacy displayID default — which
+            // migrateLegacySoftBrightnessIfNeeded folds into the store under the
+            // right UUID the next time the display is online.
+            UserDefaults.standard.set(factor, forKey: Self.legacySoftBrightnessKey(for: displayID))
+            return
+        }
+        DisplayStateStore.shared.update(uuid) { $0.softwareBrightnessFactor = factor }
     }
 
     private func loadSoftwareBrightness(for displayID: CGDirectDisplayID) -> Double? {
-        let key = softBrightnessKey(for: displayID)
-        guard UserDefaults.standard.object(forKey: key) != nil else { return nil }
-        return UserDefaults.standard.double(forKey: key)
+        guard let uuid = softBrightnessUUID(for: displayID) else {
+            let key = Self.legacySoftBrightnessKey(for: displayID)
+            guard UserDefaults.standard.object(forKey: key) != nil else { return nil }
+            return UserDefaults.standard.double(forKey: key)
+        }
+        return DisplayStateStore.shared.state(for: uuid).softwareBrightnessFactor
     }
 
     /// Returns the current software brightness factor for a display, or nil if not set.

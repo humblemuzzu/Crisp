@@ -18,18 +18,11 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
     static let shared = SettingsService()
 
     private let defaults = UserDefaults.standard
-    private let supportDir: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = base.appendingPathComponent("Crisp", isDirectory: true)
-        // One-time migration from the pre-rename storage folder.
-        let legacy = base.appendingPathComponent("FreeDisplay", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: dir.path),
-           FileManager.default.fileExists(atPath: legacy.path) {
-            try? FileManager.default.moveItem(at: legacy, to: dir)
-        }
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }()
+    /// Shared with DisplayStateStore, which owns the folder's creation and the
+    /// one-time move from the pre-rename `FreeDisplay` directory: either service
+    /// can be the first to touch it at launch, so that logic can only live in
+    /// one place.
+    private let supportDir = DisplayStateStore.supportDirectory
 
     private init() {
         loadAll()
@@ -60,7 +53,6 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         static let ddcCacheTTL            = "crisp.ddcCacheTTL"
         static let colorPickerHistory     = "crisp.colorPickerHistory"
         static let brightnessKeyTarget    = "crisp.brightnessKeyTarget"
-        static let brightnessKeySelected  = "crisp.brightnessKeySelectedDisplays"
         // Per-display keys use prefix + displayID
         static let brightnessPrefix       = "crisp.brightness_"
         static let contrastPrefix         = "crisp.contrast_"
@@ -109,11 +101,11 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
     }
 
     /// Displays chosen for the `.selected` brightness-key mode, stored by stable
-    /// DisplayInfo.displayUUID (not the volatile CGDirectDisplayID, which macOS can
-    /// reassign across reconnects). Ignored unless brightnessKeyTarget == .selected.
-    @Published var brightnessKeySelectedDisplayUUIDs: Set<String> = [] {
+    /// DisplayUUID (not the volatile CGDirectDisplayID, which macOS can reassign
+    /// across reconnects). Ignored unless brightnessKeyTarget == .selected.
+    @Published var brightnessKeySelectedDisplayUUIDs: Set<DisplayUUID> = [] {
         didSet {
-            defaults.set(Array(brightnessKeySelectedDisplayUUIDs), forKey: Keys.brightnessKeySelected)
+            DisplayStateStore.shared.setMembership(\.brightnessKeySelected, to: brightnessKeySelectedDisplayUUIDs)
         }
     }
 
@@ -191,7 +183,7 @@ final class SettingsService: ObservableObject, @unchecked Sendable {
         colorPickerHistory = defaults.stringArray(forKey: Keys.colorPickerHistory) ?? []
         brightnessKeyTarget = defaults.string(forKey: Keys.brightnessKeyTarget)
             .flatMap(BrightnessKeyTarget.init(rawValue:)) ?? .underCursor
-        brightnessKeySelectedDisplayUUIDs = Set(defaults.stringArray(forKey: Keys.brightnessKeySelected) ?? [])
+        brightnessKeySelectedDisplayUUIDs = DisplayStateStore.shared.uuids { $0.brightnessKeySelected == true }
         reapplyDDCOnReconnect = defaults.object(forKey: Keys.reapplyDDCOnReconnect) != nil
             ? defaults.bool(forKey: Keys.reapplyDDCOnReconnect) : true
     }

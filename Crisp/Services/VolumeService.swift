@@ -22,13 +22,12 @@ final class VolumeService: ObservableObject {
     /// hardware fact, so remember it: on flaky DDC (the wedged-read AOC) a
     /// launch-time probe can miss, and without the memory the slider, the
     /// settings toggle, and the key routing would all vanish for the session.
-    private let capableKey = "crisp.volumeCapableDisplays"
-    private lazy var rememberedCapable: Set<String> =
-        Set(UserDefaults.standard.stringArray(forKey: capableKey) ?? [])
+    private lazy var rememberedCapable: Set<DisplayUUID> =
+        DisplayStateStore.shared.uuids { $0.volumeCapable == true }
 
-    private func rememberCapable(_ uuid: String) {
+    private func rememberCapable(_ uuid: DisplayUUID) {
         guard rememberedCapable.insert(uuid).inserted else { return }
-        UserDefaults.standard.set(Array(rememberedCapable), forKey: capableKey)
+        DisplayStateStore.shared.update(uuid) { $0.volumeCapable = true }
     }
 
     /// Drop per-display state for a disconnected display so a reused
@@ -50,11 +49,11 @@ final class VolumeService: ObservableObject {
         guard !display.isBuiltin else { return }
         // Seed from memory so a failed probe can't hide the feature; the read
         // below still adopts the monitor's current level whenever it works.
-        if rememberedCapable.contains(display.displayUUID) {
+        if rememberedCapable.contains(display.stateUUID) {
             display.volumeSupported = true
         }
         let id = display.displayID
-        let uuid = display.displayUUID
+        let uuid = display.stateUUID
         DDCService.shared.readAsync(displayID: id, command: DDCService.volumeVCP) { result in
             Task { @MainActor in
                 guard let result else { return }

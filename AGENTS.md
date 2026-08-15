@@ -206,3 +206,6 @@ event tap armed` once granted, and `brightness key: adjusting external display
 - `ddc-ci.md` — how DDC/CI works here, wire formats, verification evidence
 - `crisp-audit.md` — the two full-repo audits of upstream Crisp
 - `benq-ma320u.md` — monitor facts and verified values
+- `windowserver-crash.md` — the WindowServer segfault, read out of its crash
+  report: an Apple use-after-free in CoreAnimation's external-display object,
+  not something this app can cause

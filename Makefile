@@ -35,9 +35,14 @@ SWIFTC_FLAGS := -O -swift-version 5 -strict-concurrency=minimal -parse-as-librar
                 -framework AppKit -framework SwiftUI -framework IOKit -framework CoreAudio \
                 -Xlinker -undefined -Xlinker dynamic_lookup
 
-# crispctl shares DDCService + DDCServiceMatcher with the app (same IOKit DDC
-# stack, no private frameworks). Command Line Tools only.
-CRISPCTL_SOURCES := crispctl/*.swift Crisp/Services/DDCService.swift Crisp/Models/DDCServiceMatcher.swift
+# crispctl shares the app's whole DDC stack (same IOKit DDC path, no private
+# frameworks): DDCService on top of the DDCTransport seam (DDCPacket framing,
+# DDCProtocolEngine retry/quarantine, IOKitDDCTransport I2C, DDCServiceMatcher
+# channel pairing). Command Line Tools only.
+CRISPCTL_SOURCES := crispctl/*.swift \
+                    Crisp/Services/DDCService.swift Crisp/Services/IOKitDDCTransport.swift \
+                    Crisp/Models/DDCPacket.swift Crisp/Models/DDCTransport.swift \
+                    Crisp/Models/DDCProtocolEngine.swift Crisp/Models/DDCServiceMatcher.swift
 CRISPCTL_FLAGS := -O -swift-version 5 -strict-concurrency=minimal -parse-as-library \
                   -import-objc-header Crisp/Crisp-Bridging-Header.h \
                   -framework IOKit -framework CoreGraphics

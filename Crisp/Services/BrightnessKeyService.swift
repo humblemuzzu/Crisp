@@ -43,6 +43,28 @@ final class BrightnessKeyService: ObservableObject, @unchecked Sendable {
     /// Drives the "Keys Active" row in Settings so the user gets live feedback
     /// instead of having to guess whether Accessibility took effect.
     @Published private(set) var isArmed: Bool = false
+
+    /// Why the keys are (or are not) working, for the Settings row. `isArmed` alone cannot tell
+    /// "no Accessibility grant" from "grant recorded but macOS refused the tap anyway", and those
+    /// two need opposite instructions. Pure diagnosis: nothing here gates arming or retrying.
+    enum KeyInterceptionState: Equatable {
+        /// Tap created and in the run loop; F1/F2 reach the display under the cursor.
+        case armed
+        /// AXIsProcessTrusted() == false — the honest case, the user has simply not granted yet.
+        case waitingForPermission
+        /// AXIsProcessTrusted() == true, yet tapCreate returned nil. TCC keys a grant on the bundle
+        /// id AND the code-signing requirement, so a build signed differently from the one that was
+        /// granted (ad-hoc signing re-pins the cdhash on every rebuild) leaves the System Settings
+        /// toggle lit over a dead record. Only `tccutil reset Accessibility <bundle id>` clears it,
+        /// which is why this state gets its own message instead of the generic "waiting" one.
+        case grantedButRefused
+        /// The user switched the feature off; no tap is wanted.
+        case disabled
+    }
+
+    /// Diagnosis behind `isArmed`, refreshed at every arm attempt and teardown.
+    @Published private(set) var interceptionState: KeyInterceptionState = .waitingForPermission
+
     /// Monotonic time (systemUptime) of the last tap disable. retryUntilArmed waits a short
     /// settle delay past this before re-arming, so a revoke (whose trust state briefly lags)
     /// resolves before we put an active session tap back in the pipeline. Avoids the kome
@@ -119,6 +141,15 @@ final class BrightnessKeyService: ObservableObject, @unchecked Sendable {
 
         guard let tap else {
             keyLog.info("tapCreate failed (Accessibility not granted?) — retrying until granted")
+            // Trust read at the moment of refusal: trusted-yet-refused is the fingerprint of a
+            // stale TCC record (see KeyInterceptionState.grantedButRefused) and is the only case
+            // the user cannot fix from the Accessibility pane alone.
+            if AXIsProcessTrusted() {
+                interceptionState = .grantedButRefused
+                keyLog.error("Accessibility reports granted but tapCreate was refused — stale TCC record for this build")
+            } else {
+                interceptionState = .waitingForPermission
+            }
             retained.release()
             selfRetained = nil
             retryUntilArmed()
@@ -134,11 +165,15 @@ final class BrightnessKeyService: ObservableObject, @unchecked Sendable {
         stopRetrying()
         startTrustWatchdog()
         isArmed = true
+        interceptionState = .armed
         keyLog.info("brightness-key event tap armed")
     }
 
     /// Removes the event tap and releases the retained self reference.
-    func stop() {
+    /// `userInitiated` only labels the resulting state for the Settings row: a teardown from the
+    /// trust watchdog or a tap-disable is a revoke, not a choice, and must keep reading as
+    /// "waiting for Accessibility" while retryUntilArmed works on getting the tap back.
+    func stop(userInitiated: Bool = false) {
         stopTrustWatchdog()
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
@@ -149,6 +184,7 @@ final class BrightnessKeyService: ObservableObject, @unchecked Sendable {
         eventTap = nil
         runLoopSource = nil
         isArmed = false
+        interceptionState = userInitiated ? .disabled : .waitingForPermission
 
         selfRetained?.release()
         selfRetained = nil
@@ -340,11 +376,11 @@ final class BrightnessKeyService: ObservableObject, @unchecked Sendable {
             // does something instead of being dead.
             let selected = MainActor.assumeIsolated { SettingsService.shared.brightnessKeySelectedDisplayUUIDs }
             let anyAttached = MainActor.assumeIsolated {
-                DisplayManagerAccessor.shared.displays.contains { selected.contains($0.displayUUID) }
+                DisplayManagerAccessor.shared.displays.contains { selected.contains($0.stateUUID) }
             }
             if anyAttached {
                 Task { @MainActor in
-                    let targets = DisplayManagerAccessor.shared.displays.filter { selected.contains($0.displayUUID) }
+                    let targets = DisplayManagerAccessor.shared.displays.filter { selected.contains($0.stateUUID) }
                     self.adjustDisplays(targets, up: up)
                 }
                 return nil

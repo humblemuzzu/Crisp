@@ -408,7 +408,6 @@ private struct SupportLinkRow: View {
 
 struct SettingsView: View {
     @ObservedObject private var settings = SettingsService.shared
-    @ObservedObject private var keyService = BrightnessKeyService.shared
     // SettingsView stays mounted (only height-clipped) across panel opens, so the
     // support submenu's expansion must be reset explicitly on close like every
     // other section, or it reopens still expanded.
@@ -451,7 +450,9 @@ struct SettingsView: View {
                             requestAccess()
                             BrightnessKeyService.shared.start()
                         } else {
-                            BrightnessKeyService.shared.stop()
+                            // userInitiated: this is the one teardown that is a choice, so the
+                            // status row reads "off" instead of blaming a missing permission.
+                            BrightnessKeyService.shared.stop(userInitiated: true)
                         }
                     }
                 )) {
@@ -581,23 +582,12 @@ struct SettingsView: View {
                     subtitle: brightnessTargetName(settings.brightnessKeyTarget),
                     isExpanded: $showBrightnessKeys
                 )
-                // Live status: the tap is armed (keys reach the external display)
-                // or still waiting on Accessibility. No guessing required.
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(keyService.isArmed ? Color.green : Color.orange)
-                        .frame(width: 6, height: 6)
-                        .accessibilityHidden(true)
-                    Text(
-                        keyService.isArmed
-                            ? String(localized: "Keys active — F1/F2 control the display under the cursor")
-                            : String(localized: "Waiting for Accessibility…")
-                    )
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 4)
+                // Live status: armed, waiting on Accessibility, or the case that used to look
+                // like a broken app — permission granted on paper, tap refused by macOS — which
+                // carries its own recovery button. No guessing required.
+                BrightnessKeyStatusView()
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
                 if showBrightnessKeys {
                     ForEach(BrightnessKeyTarget.allCases, id: \.self) { target in
                         CheckmarkRow(
@@ -614,12 +604,12 @@ struct SettingsView: View {
                     if settings.brightnessKeyTarget == .selected {
                         ForEach(displayManager.displays) { display in
                             Toggle(isOn: Binding(
-                                get: { settings.brightnessKeySelectedDisplayUUIDs.contains(display.displayUUID) },
+                                get: { settings.brightnessKeySelectedDisplayUUIDs.contains(display.stateUUID) },
                                 set: { isOn in
                                     if isOn {
-                                        settings.brightnessKeySelectedDisplayUUIDs.insert(display.displayUUID)
+                                        settings.brightnessKeySelectedDisplayUUIDs.insert(display.stateUUID)
                                     } else {
-                                        settings.brightnessKeySelectedDisplayUUIDs.remove(display.displayUUID)
+                                        settings.brightnessKeySelectedDisplayUUIDs.remove(display.stateUUID)
                                     }
                                 }
                             )) {

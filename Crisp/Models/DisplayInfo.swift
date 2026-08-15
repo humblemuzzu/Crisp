@@ -54,6 +54,10 @@ class DisplayInfo: ObservableObject, Identifiable {
         return "v\(vendorNumber)-m\(modelNumber)-s\(serialNumber)"
     }
 
+    /// `displayUUID` in the type every persistence API keys on, so a call site
+    /// physically cannot hand a `CGDirectDisplayID` to the store (AGENTS.md rule #3).
+    var stateUUID: DisplayUUID { DisplayUUID(displayUUID) }
+
     /// The native (highest non-HiDPI) resolution, used for HiDPI enablement and presets.
     /// Reported in CG's rotated space: on a 90/270-rotated display this is portrait,
     /// matching availableModes.

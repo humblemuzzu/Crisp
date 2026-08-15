@@ -84,7 +84,7 @@ struct InputSourceMenuRow: View {
             .padding(.vertical, 7)
 
             Toggle(isOn: Binding(
-                get: { DDCFeatureService.shared.reapplyInputEnabled(for: display.displayUUID) },
+                get: { DDCFeatureService.shared.reapplyInputEnabled(for: display.stateUUID) },
                 set: { DDCFeatureService.shared.setReapplyInput($0, for: display) }
             )) {
                 Text("Reapply input on reconnect")

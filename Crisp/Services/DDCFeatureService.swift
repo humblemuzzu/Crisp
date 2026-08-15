@@ -43,50 +43,44 @@ final class DDCFeatureService: ObservableObject {
 
     // MARK: - Persistence (per displayUUID)
 
-    private func key(_ uuid: String, _ field: String) -> String { "crisp.ddcState.\(uuid).\(field)" }
+    /// All of it lives in DisplayStateStore's versioned document; this service
+    /// only decides *what* is worth remembering, never how it is stored.
+    private var store: DisplayStateStore { .shared }
 
-    func savedBrightness(for uuid: String) -> Double? {
-        let k = key(uuid, "brightness")
-        guard UserDefaults.standard.object(forKey: k) != nil else { return nil }
-        return UserDefaults.standard.double(forKey: k)
+    func savedBrightness(for uuid: DisplayUUID) -> Double? {
+        store.state(for: uuid).brightness
     }
 
     func persistBrightness(_ percent: Double, for display: DisplayInfo) {
-        UserDefaults.standard.set(max(0.0, min(100.0, percent)), forKey: key(display.displayUUID, "brightness"))
+        store.update(display.stateUUID) { $0.brightness = max(0.0, min(100.0, percent)) }
     }
 
-    func savedContrast(for uuid: String) -> Double? {
-        let k = key(uuid, "contrast")
-        guard UserDefaults.standard.object(forKey: k) != nil else { return nil }
-        return UserDefaults.standard.double(forKey: k)
+    func savedContrast(for uuid: DisplayUUID) -> Double? {
+        store.state(for: uuid).contrast
     }
 
-    func savedVolume(for uuid: String) -> Double? {
-        let k = key(uuid, "volume")
-        guard UserDefaults.standard.object(forKey: k) != nil else { return nil }
-        return UserDefaults.standard.double(forKey: k)
+    func savedVolume(for uuid: DisplayUUID) -> Double? {
+        store.state(for: uuid).volume
     }
 
-    func savedInput(for uuid: String) -> UInt16? {
-        let k = key(uuid, "input")
-        guard UserDefaults.standard.object(forKey: k) != nil else { return nil }
-        return UInt16(UserDefaults.standard.double(forKey: k))
+    func savedInput(for uuid: DisplayUUID) -> UInt16? {
+        store.state(for: uuid).input
     }
 
     /// Re-apply saved input source on reconnect. Off by default: an input
     /// switch blanks the screen for a moment and a stale saved code could
     /// point at a port with nothing plugged in.
-    func reapplyInputEnabled(for uuid: String) -> Bool {
-        UserDefaults.standard.bool(forKey: key(uuid, "reapplyInput"))
+    func reapplyInputEnabled(for uuid: DisplayUUID) -> Bool {
+        store.state(for: uuid).reapplyInputOnReconnect ?? false
     }
 
     func setReapplyInput(_ enabled: Bool, for display: DisplayInfo) {
-        UserDefaults.standard.set(enabled, forKey: key(display.displayUUID, "reapplyInput"))
+        store.update(display.stateUUID) { $0.reapplyInputOnReconnect = enabled }
     }
 
     /// Persist a user-driven volume change (called from VolumeService.setVolume).
     func persistVolume(_ percent: Double, for display: DisplayInfo) {
-        UserDefaults.standard.set(max(0.0, min(100.0, percent)), forKey: key(display.displayUUID, "volume"))
+        store.update(display.stateUUID) { $0.volume = max(0.0, min(100.0, percent)) }
     }
 
     /// Drop per-display state for a disconnected display so a reused
@@ -132,7 +126,7 @@ final class DDCFeatureService: ObservableObject {
     }
 
     private func persistContrast(_ percent: Double, for display: DisplayInfo) {
-        UserDefaults.standard.set(percent, forKey: key(display.displayUUID, "contrast"))
+        store.update(display.stateUUID) { $0.contrast = percent }
     }
 
     private func pumpContrast(for id: CGDirectDisplayID) {
@@ -171,7 +165,7 @@ final class DDCFeatureService: ObservableObject {
     func setInputSource(_ value: UInt16, for display: DisplayInfo) {
         guard display.inputSourceSupported else { return }
         display.inputSource = value
-        UserDefaults.standard.set(Double(value), forKey: key(display.displayUUID, "input"))
+        store.update(display.stateUUID) { $0.input = value }
         DDCService.shared.writeAsync(displayID: display.displayID, command: 0x60, value: value)
     }
 
@@ -183,7 +177,7 @@ final class DDCFeatureService: ObservableObject {
     /// so a monitor that remembers its own settings gets no writes at all.
     func reapplyDDCStateIfNeeded(for display: DisplayInfo) {
         guard SettingsService.shared.reapplyDDCOnReconnect, !display.isBuiltin else { return }
-        let uuid = display.displayUUID
+        let uuid = display.stateUUID
         if let saved = savedBrightness(for: uuid), abs(saved - display.brightness) >= 1.0 {
             Task { await BrightnessService.shared.setBrightness(saved, for: display) }
         }

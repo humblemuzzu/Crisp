@@ -51,8 +51,16 @@ targets:
       - path: CrispTests
       - path: Crisp/Models/DisplayModeGeometry.swift
       - path: Crisp/Models/DDCServiceMatcher.swift
+      - path: Crisp/Models/DDCPacket.swift
+      - path: Crisp/Models/DDCTransport.swift
+      - path: Crisp/Models/DDCProtocolEngine.swift
       - path: Crisp/Models/RefreshRateFormat.swift
       - path: Crisp/Models/GammaPersistenceKey.swift
+      - path: Crisp/Models/DisplayUUID.swift
+      - path: Crisp/Models/DisplayStateDocument.swift
+      # The I/O half of the store (DisplayStateStoreIOTests). Foundation +
+      # AppKit's terminate notification only, so it stays headless.
+      - path: Crisp/Services/DisplayStateStore.swift
       - path: Crisp/Models/CombinedBrightness.swift
       - path: Crisp/Models/VariableRefreshModes.swift
     settings:
@@ -71,6 +79,10 @@ targets:
     sources:
       - path: crispctl
       - path: Crisp/Services/DDCService.swift
+      - path: Crisp/Services/IOKitDDCTransport.swift
+      - path: Crisp/Models/DDCPacket.swift
+      - path: Crisp/Models/DDCTransport.swift
+      - path: Crisp/Models/DDCProtocolEngine.swift
       - path: Crisp/Models/DDCServiceMatcher.swift
     settings:
       base:
