@@ -10,7 +10,8 @@
 #                   run before pushing
 #                   (auto-run on every push after: git config core.hooksPath .githooks)
 #
-# Distributable DMG:
+# Distributable DMG (docs/RELEASING.md):
+#   make preflight  can this machine produce a notarized release? (checks only)
 #   make build      signed universal (arm64 + x86_64) DMG via scripts/release.sh (dry run)
 #   make dmg        DMG via Xcode (scripts/build-dmg.sh; needs full Xcode + xcodegen)
 #   make release ARGS="vX.Y.Z notes.md --publish"   full release (see scripts/release.sh)
@@ -58,7 +59,7 @@ CRISPCTL_FLAGS := -O -swift-version 5 -strict-concurrency=minimal -parse-as-libr
                   -framework IOKit -framework CoreGraphics
 
 .DEFAULT_GOAL := help
-.PHONY: help dev compile crispctl strict-build test boundaries lint loc-check check build dmg release clean
+.PHONY: help dev compile crispctl strict-build test boundaries lint loc-check check preflight build dmg release clean
 
 help:
 	@echo "Crisp — make targets:"
@@ -68,6 +69,7 @@ help:
 	@echo "  make test       generate the Xcode project and run unit tests"
 	@echo "  make boundaries architecture gates (AGENTS.md §3), no Xcode needed"
 	@echo "  make check      lint + boundaries + tests + localization keys, everything CI enforces"
+	@echo "  make preflight  can this machine produce a notarized release? (docs/RELEASING.md)"
 	@echo "  make build      signed universal DMG, no Xcode (scripts/release.sh v$(VERSION))"
 	@echo "  make dmg        DMG via Xcode (scripts/build-dmg.sh)"
 	@echo "  make release ARGS=\"vX.Y.Z notes.md --publish\"   full release (scripts/release.sh)"
@@ -122,6 +124,12 @@ loc-check:
 # what an unfamiliar contributor trips over.
 check: lint boundaries strict-build test loc-check
 	@echo "check passed: lint clean, boundaries held, zero warnings, tests green, localization keys complete"
+
+# Release credentials only: a Developer ID Application certificate and stored
+# notarization credentials. Builds nothing, so it is the cheapest way to find out
+# that a release cannot be signed *before* spending two minutes compiling one.
+preflight:
+	./scripts/release.sh --preflight
 
 build:
 	./scripts/release.sh v$(VERSION)

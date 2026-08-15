@@ -119,6 +119,12 @@ identity explicitly.
 The upstream project's `brew install --cask didriksg/tap/crisp` and its signed
 DMG install *upstream* Crisp, which does not include this fork's DDC features.
 
+The pipeline that would produce a signed, notarized DMG and a Homebrew cask for
+*this* fork is in place (`scripts/release.sh`, `Casks/crisp-ddc.rb`,
+[`docs/RELEASING.md`](docs/RELEASING.md)); what it needs is a Developer ID
+certificate, which is why nothing is published yet. `./scripts/release.sh
+--preflight` reports exactly what is missing.
+
 ## Accessibility, and the trap that started this
 
 Everything except the brightness keys works with no permissions at all. The keys
@@ -200,7 +206,13 @@ and nothing else does). Adding a monitor is a one-file JSON change and needs no
 Swift.
 
 Bug reports and pull requests are welcome. Please run `make check` first — it is
-what CI runs.
+what CI runs. [`CONTRIBUTING.md`](CONTRIBUTING.md) covers the rest: the build,
+the gates and why they exist, the test conventions, and the safety rule around
+input-source codes.
+
+Filing a bug: paste the output of the app's **Diagnostics → Copy Bug Report**.
+The issue templates ask for it, and it answers most of the questions a
+maintainer would otherwise have to ask.
 
 ## Localization
 

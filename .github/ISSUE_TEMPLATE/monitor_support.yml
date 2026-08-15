@@ -1,0 +1,92 @@
+name: Monitor not working (or wrong values / labels)
+description: A monitor that does not respond, clamps its range, or shows wrong input labels.
+labels: ["monitor", "quirks"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Real monitors do not follow the MCCS standard: they advertise input codes
+        they never use, refuse the bottom half of their own brightness range, and
+        answer "supported" to every feature query. What each model actually does
+        lives in the **quirks database** — one JSON file per vendor, no Swift.
+
+        **The app can write most of this issue for you.** Menu-bar panel →
+        **Diagnostics** → **Copy Monitor Report** (the button on your monitor's
+        card). It probes the display and produces a proposed quirks entry plus a
+        summary. No serial number is included: quirks describe a *model*, not
+        your unit.
+
+        Schema and measurement procedure:
+        [`Crisp/Resources/quirks/README.md`](https://github.com/humblemuzzu/Crisp/blob/benq-ddc/Crisp/Resources/quirks/README.md).
+
+  - type: input
+    id: model
+    attributes:
+      label: Monitor model
+      placeholder: "BenQ MA320U"
+    validations:
+      required: true
+
+  - type: textarea
+    id: monitor-report
+    attributes:
+      label: Monitor report (generated quirks JSON)
+      description: >-
+        Diagnostics → **Copy Monitor Report**, pasted here. If the app cannot see
+        the monitor at all, paste `./crispctl-bin list` output instead and say so.
+      render: markdown
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: symptoms
+    attributes:
+      label: What does not work
+      options:
+        - label: Brightness (VCP 0x10) does not move the backlight
+        - label: Contrast (VCP 0x12) does nothing
+        - label: Volume (VCP 0x62) does nothing
+        - label: Input-source labels are wrong or missing
+        - label: A value lands and then reverts a second later
+        - label: Values drop when the slider is dragged quickly
+        - label: The monitor is not detected at all
+
+  - type: textarea
+    id: measurements
+    attributes:
+      label: What you measured
+      description: >-
+        Which values you tried, what came back, and on what (Mac model, macOS
+        version, cable/port). Change one thing per run — two at once and you have
+        measured neither.
+      placeholder: |
+        ./crispctl-bin set contrast 40 -> get returns 40, still 40 after 5s
+        ./crispctl-bin set contrast 20 -> get returns 30, so 30 is the real floor
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: input-safety
+    attributes:
+      label: Input-source codes — read this before reporting any
+      description: >-
+        A wrong VCP 0x60 write sends the panel to a port with nothing attached.
+        The Mac can no longer reach it over that cable and the only recovery is
+        the monitor's own physical buttons.
+      options:
+        - label: >-
+            I did **not** guess an input code, and did not copy one from another
+            model. Anything I report was produced either by Input Source ▸
+            **Calibrate…** (which reverts itself on a countdown) or by switching
+            with the monitor's own buttons and re-reading `crispctl get input`.
+          required: true
+
+  - type: checkboxes
+    id: pr
+    attributes:
+      label: Contribution
+      options:
+        - label: >-
+            I am willing to open a pull request adding this to
+            `Crisp/Resources/quirks/<vendor>.json`. (Very welcome — it is one file
+            and no Swift.)

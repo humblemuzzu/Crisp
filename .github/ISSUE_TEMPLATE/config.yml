@@ -1,0 +1,14 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Upstream Crisp (HiDPI, presets, arrangement, virtual displays…)
+    url: https://github.com/didriksg/Crisp/issues
+    about: >-
+      This repository is a fork that adds DDC contrast, input switching,
+      per-display persistence and crispctl. Anything outside those — resolution
+      scaling, presets, colour profiles, auto-brightness — belongs upstream,
+      where it is maintained.
+  - name: Adding your monitor to the quirks database
+    url: https://github.com/humblemuzzu/Crisp/blob/benq-ddc/Crisp/Resources/quirks/README.md
+    about: >-
+      The schema, the measurement procedure, and what `verified` means. Adding a
+      monitor is a one-file JSON change and needs no Swift.

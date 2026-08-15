@@ -33,6 +33,10 @@ This is the fast dev loop: edit, compile, swap, relaunch, no Xcode involved.
 
 ## Before opening a PR
 
+[`CONTRIBUTING.md`](../CONTRIBUTING.md) is the full guide (the gates and why they
+exist, the test conventions, commit style, and the safety rule around
+input-source codes). The build-level part of it:
+
 Run `make check`: it runs SwiftLint (strict), the architecture gates, the unit
 tests, and the localization key check, the same checks CI enforces, so failures
 surface locally instead of on the PR. It needs full Xcode plus `swiftlint` and

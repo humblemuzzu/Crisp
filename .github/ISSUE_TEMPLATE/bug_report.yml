@@ -1,0 +1,80 @@
+name: Bug report
+description: Something in the app or in crispctl does not work.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **The single most useful thing you can paste here is the app's own
+        diagnostics report.** Open the menu-bar panel → **Diagnostics** →
+        **Copy Bug Report**, then paste it into the field below.
+
+        It records the app and macOS versions, the Mac model, the DDC transport,
+        and per display: whether a DDC channel was found, which brightness path
+        is in use, the read-quarantine state, the matched quirks entry and each
+        feature's raw probe. That is the information needed to answer "why is
+        this control missing on your machine", which is otherwise nearly
+        impossible to answer remotely.
+
+        Per-unit identifiers (EDID serial, display UUID) are **redacted unless
+        you tick the box in that window**. Leave it unticked unless asked.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+      placeholder: |
+        Moved the brightness slider; the monitor's backlight did not change,
+        but the picture got darker.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics report
+      description: >-
+        Menu-bar panel → Diagnostics → **Copy Bug Report**, then paste here.
+        If the app will not launch at all, say so instead and paste any output
+        from `./crispctl-bin list`.
+      render: markdown
+    validations:
+      required: true
+
+  - type: input
+    id: monitor
+    attributes:
+      label: Monitor and connection
+      description: Model, and how it is connected.
+      placeholder: "BenQ MA320U over DisplayPort (USB-C cable), MacBook lid closed"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - Built from source (scripts/make-app.sh)
+        - Built from source (make dev)
+        - Downloaded DMG / Homebrew cask
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: preconditions
+    attributes:
+      label: Before filing
+      options:
+        - label: >-
+            DDC/CI is switched **on** in the monitor's own on-screen menu. Some
+            monitors ship with it off, and nothing responds until it is enabled.
+        - label: >-
+            No other display tool (BetterDisplay, MonitorControl, Lunar…) is
+            running. They write the same DDC registers; last writer wins.
+        - label: >-
+            For brightness-key problems: Crisp is enabled in System Settings →
+            Privacy & Security → Accessibility, and the panel's "Keys active"
+            dot is green.

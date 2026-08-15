@@ -1,0 +1,174 @@
+name: Release
+
+# Tag-triggered release. Push a tag that matches project.yml's MARKETING_VERSION
+# (docs/RELEASING.md) and this builds the universal DMG, signs and notarizes it
+# when the repository has credentials, and publishes it as a release asset.
+#
+# A fork without those secrets still gets a working build: the signing steps are
+# skipped with a warning and the DMG is published as an unsigned artifact rather
+# than the job failing. That is the one place this pipeline is permissive, and it
+# is loud about it — an unsigned DMG is for local testing, Gatekeeper will refuse
+# it anywhere else.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  # Needed to create the release and upload the DMG.
+  contents: write
+
+jobs:
+  release:
+    # Same runner as ci.yml, for the same reason: the panel backdrop uses
+    # NSGlassEffectView, which must exist at compile time (macOS 26 SDK).
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install SwiftLint and xcodegen
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install swiftlint xcodegen
+
+      # project.yml's MARKETING_VERSION is the single source of truth for the
+      # version; the tag is a label for it. release.sh --publish enforces the same
+      # rule, but this workflow does its own publishing, so it repeats the guard
+      # rather than relying on a path it does not take.
+      - name: Tag matches project.yml
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          PROJECT_VERSION=$(grep -E '^[[:space:]]*MARKETING_VERSION:' project.yml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ "$VERSION" != "$PROJECT_VERSION" ]; then
+            echo "::error::Tag $TAG does not match MARKETING_VERSION $PROJECT_VERSION in project.yml. Bump project.yml, commit, then re-tag."
+            exit 1
+          fi
+          echo "Releasing $TAG (project.yml: $PROJECT_VERSION)"
+
+      # Everything CI enforces: lint, the AGENTS.md §3 architecture gates, the
+      # zero-warning builds, the headless test suite, localization keys. A tag is
+      # not a reason to ship something that would have failed a pull request.
+      - name: Full check (lint + boundaries + build + tests + i18n)
+        run: make check
+
+      # Secrets are not readable from a step-level `if:` on every runner
+      # configuration, so decide once, here, and key the later steps off the
+      # output. Absent secrets are a warning, not a failure (see the header).
+      - name: Detect signing credentials
+        id: creds
+        env:
+          CERT: ${{ secrets.MACOS_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          if [ -n "$CERT" ] && [ -n "$CERT_PASSWORD" ]; then
+            echo "signing=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signing=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::MACOS_CERTIFICATE / MACOS_CERTIFICATE_PASSWORD are not set — building UNSIGNED. Gatekeeper will refuse this DMG on any machine that did not build it. See docs/RELEASING.md."
+          fi
+          if [ -n "$NOTARY_APPLE_ID" ] && [ -n "$NOTARY_TEAM_ID" ] && [ -n "$NOTARY_PASSWORD" ]; then
+            echo "notarizing=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "notarizing=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::NOTARY_APPLE_ID / NOTARY_TEAM_ID / NOTARY_PASSWORD are not set — the build will NOT be notarized. See docs/RELEASING.md."
+          fi
+
+      # Imports the Developer ID Application certificate into a throwaway
+      # keychain that dies with the runner. The identity is exported as
+      # CRISP_SIGN_ID, which is what scripts/release.sh reads.
+      - name: Import Developer ID certificate
+        if: steps.creds.outputs.signing == 'true'
+        env:
+          CERT: ${{ secrets.MACOS_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/crisp-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          printf '%s' "$CERT" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/cert.p12"
+          # Without this, codesign blocks on a GUI keychain prompt that no runner
+          # can answer, and the job hangs until it times out.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | grep "Developer ID Application" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::MACOS_CERTIFICATE imported, but it holds no Developer ID Application identity. Export the right certificate as a .p12 (see docs/RELEASING.md)."
+            exit 1
+          fi
+          echo "CRISP_SIGN_ID=$IDENTITY" >> "$GITHUB_ENV"
+          echo "Signing identity: $IDENTITY"
+
+      # release.sh decides what it can do from the environment: Developer ID +
+      # notary credentials → signed, notarized, stapled and Gatekeeper-verified;
+      # neither → ad-hoc, with the warning printed in the log. It also verifies
+      # the quirks JSON actually landed in the bundle.
+      - name: Build DMG
+        env:
+          CRISP_NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          CRISP_NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          CRISP_NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: ./scripts/release.sh "${GITHUB_REF_NAME}"
+
+      - name: Summarise the artifact
+        run: |
+          SHA=$(shasum -a 256 Crisp.dmg | awk '{print $1}')
+          {
+            echo "## Crisp ${GITHUB_REF_NAME}"
+            echo ""
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| DMG sha256 | \`$SHA\` |"
+            echo "| Signed | ${{ steps.creds.outputs.signing }} |"
+            echo "| Notarized | ${{ steps.creds.outputs.notarizing }} |"
+            echo ""
+            echo "Update \`Casks/crisp-ddc.rb\` with that sha256 (docs/RELEASING.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Keep the DMG even when the release step is skipped or fails, so a fork
+      # without credentials still has something to download.
+      - name: Upload DMG as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Crisp-${{ github.ref_name }}-dmg
+          path: Crisp.dmg
+          if-no-files-found: error
+
+      - name: Publish the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTE=""
+          if [ "${{ steps.creds.outputs.notarizing }}" != "true" ]; then
+            NOTE=$'\n\n> [!WARNING]\n> This build is **not notarized**. macOS Gatekeeper will refuse to open it. Build from source instead (see the README), or see docs/RELEASING.md.'
+          fi
+          gh release create "${GITHUB_REF_NAME}" Crisp.dmg \
+            --title "Crisp ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --notes "$(printf 'sha256: %s%s' "$(shasum -a 256 Crisp.dmg | awk '{print $1}')" "$NOTE")"
+
+      # Runs last, and on failure too, because the case that matters is the one where
+      # an earlier step blew up mid-release. GitHub-hosted macOS runners are ephemeral
+      # so the imported key dies with the VM anyway; this exists so that pointing the
+      # workflow at a self-hosted or otherwise persistent runner cannot leave private
+      # key material on disk, or a mutated keychain search list bleeding into later jobs.
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/crisp-signing.keychain-db"
+          if [ -f "$KEYCHAIN" ]; then
+            security list-keychain -d user -s login.keychain-db
+            security delete-keychain "$KEYCHAIN"
+            echo "Signing keychain removed and the default search list restored."
+          fi
